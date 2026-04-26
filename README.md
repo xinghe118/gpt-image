@@ -4,6 +4,8 @@
 
 仓库地址：[xinghe118/gpt-image](https://github.com/xinghe118/gpt-image)
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/xinghe118/gpt-image)
+
 > [!WARNING]
 > 本项目涉及对第三方网页能力和账号状态的自动化调用与封装，仅供个人学习、技术研究和非商业性交流使用。请遵守 OpenAI 服务条款以及所在地法律法规。使用者需自行承担账号限制、接口变更、服务不可用及违规使用带来的全部风险。
 
@@ -33,6 +35,23 @@
 普通用户使用用户密钥登录后只能进入图片相关页面；管理员密钥来自后端配置，可进入账号池、概览、日志和系统设置。
 
 ## 快速开始
+
+### 一键部署到 Render + PostgreSQL
+
+点击上方 **Deploy to Render** 按钮后，Render 会根据 `render.yaml` 自动创建：
+
+- 一个 Docker Web 服务：`gpt-image`
+- 一个 PostgreSQL 数据库：`gpt-image-db`
+- 自动注入 `STORAGE_BACKEND=postgres`
+- 自动把数据库连接写入 `DATABASE_URL`
+
+部署时你只需要填写：
+
+```text
+GPT_IMAGE_AUTH_KEY=你的管理员登录密钥
+```
+
+部署完成后访问 Render 分配的域名，用这个管理员密钥登录即可。PostgreSQL 会持久保存账号池和用户密钥；首次启动时会自动建表，不需要手动执行迁移。
 
 ### 使用 Docker Compose
 
@@ -96,6 +115,15 @@ environment:
   - STORAGE_BACKEND=postgres
   - DATABASE_URL=postgresql://user:password@host:5432/dbname
 ```
+
+### PostgreSQL 存储说明
+
+设置 `STORAGE_BACKEND=postgres` 后，后端会通过 SQLAlchemy 使用 `DATABASE_URL` 连接数据库，并自动创建：
+
+- `accounts`：账号池数据
+- `auth_keys`：普通用户密钥和额度数据
+
+如果你已经有本地 JSON 数据，迁移思路是：先保留 `data/accounts.json` 和 `data/auth_keys.json`，启动一段一次性迁移脚本把它们写入 PostgreSQL。后续可以在管理后台增加“一键迁移”按钮。
 
 ## API 使用
 

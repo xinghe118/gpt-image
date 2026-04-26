@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: gpt-image
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /version
+    envVars:
+      - key: STORAGE_BACKEND
+        value: postgres
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gpt-image-db
+          property: connectionString
+      - key: GPT_IMAGE_AUTH_KEY
+        sync: false
+
+databases:
+  - name: gpt-image-db
+    plan: free

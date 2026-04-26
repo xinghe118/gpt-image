@@ -1242,29 +1242,25 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div>
                 <div className="mb-2 text-xs font-medium text-slate-500">模型</div>
-                <div className="grid gap-2">
+                <select
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                  value={imageModel}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (isImageModel(value)) {
+                      setImageModel(value);
+                    }
+                  }}
+                >
                   {IMAGE_MODELS.map((model) => (
-                    <button
-                      key={model.value}
-                      className={`rounded-xl border p-3 text-left transition ${
-                        imageModel === model.value
-                          ? "border-cyan-300 bg-cyan-50 text-cyan-950"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50/60"
-                      }`}
-                      onClick={() => setImageModel(model.value)}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold">{model.title}</span>
-                        {imageModel === model.value ? (
-                          <span className="rounded-md bg-cyan-100 px-2 py-0.5 text-[10px] font-semibold text-cyan-700">
-                            当前
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-1 text-xs leading-5 text-slate-500">{model.description}</p>
-                    </button>
+                    <option key={model.value} value={model.value}>
+                      {model.title}
+                    </option>
                   ))}
-                </div>
+                </select>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  {IMAGE_MODELS.find((model) => model.value === imageModel)?.description}
+                </p>
               </div>
               <div>
                 <div className="mb-2 text-xs font-medium text-slate-500">生成张数</div>

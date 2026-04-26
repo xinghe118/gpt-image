@@ -95,6 +95,37 @@ docker compose logs -f app
 docker compose pull && docker compose up -d
 ```
 
+## 更新 Docker 镜像
+
+仓库提交推送到 `main` 后，会触发 GitHub Actions 的 `Publish Docker Image` 工作流。只有工作流成功后，`ghcr.io/xinghe118/gpt-image:latest` 才会变成新镜像。
+
+在 VPS 上更新：
+
+```bash
+cd /opt/gpt-image
+docker compose pull
+docker compose up -d --force-recreate
+docker compose ps
+```
+
+验证服务是否起来：
+
+```bash
+curl -I http://127.0.0.1:3000
+docker compose logs --tail=120 app
+```
+
+如果页面没有变化，先检查 GitHub Actions 是否成功。如果 `Publish Docker Image` 报 `permission_denied: write_package`，说明 GHCR 包没有允许这个仓库写入。
+
+处理方式：
+
+1. 打开 GitHub 仓库右侧的 `Packages`，进入 `gpt-image` 包。
+2. 进入 `Package settings`。
+3. 在 `Manage Actions access` 中添加 `xinghe118/gpt-image`。
+4. 权限选择 `Write`。
+5. 回到 `Actions` 重新运行 `Publish Docker Image`。
+6. 工作流成功后，再到 VPS 执行 `docker compose pull && docker compose up -d --force-recreate`。
+
 ## 数据备份
 
 ```bash

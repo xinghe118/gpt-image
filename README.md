@@ -69,6 +69,25 @@ http://服务器IP:3000
 
 更多参数、Nginx 反代和备份方式见：[docs/vps-deploy.md](docs/vps-deploy.md)
 
+### 更新已部署的 VPS
+
+代码推送到 `main` 后，GitHub Actions 会自动构建并发布 Docker 镜像到 GHCR：
+
+```text
+ghcr.io/xinghe118/gpt-image:latest
+```
+
+等仓库的 `Publish Docker Image` 工作流显示绿色成功后，在 VPS 执行：
+
+```bash
+cd /opt/gpt-image
+docker compose pull
+docker compose up -d --force-recreate
+docker compose ps
+```
+
+如果 Actions 失败，VPS 拉到的仍然是旧镜像，页面不会更新。常见原因是 GHCR 包权限不足，需要在 GitHub Package settings 里给 `xinghe118/gpt-image` 仓库开启 Actions 写入权限。
+
 ### 使用 Docker Compose
 
 ```bash

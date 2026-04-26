@@ -33,6 +33,24 @@ class AuthService:
     def _clean(value: object) -> str:
         return str(value or "").strip()
 
+    @staticmethod
+    def _normalize_quota_limit(value: object) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return max(0, number)
+
+    @staticmethod
+    def _normalize_quota_used(value: object) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, number)
+
     def _normalize_item(self, raw: object) -> dict[str, object] | None:
         if not isinstance(raw, dict):
             return None
@@ -46,6 +64,8 @@ class AuthService:
         name = self._clean(raw.get("name")) or ("管理员密钥" if role == "admin" else "普通用户")
         created_at = self._clean(raw.get("created_at")) or _now_iso()
         last_used_at = self._clean(raw.get("last_used_at")) or None
+        quota_limit = self._normalize_quota_limit(raw.get("quota_limit"))
+        quota_used = min(self._normalize_quota_used(raw.get("quota_used")), quota_limit) if quota_limit is not None else self._normalize_quota_used(raw.get("quota_used"))
         return {
             "id": item_id,
             "name": name,
@@ -54,6 +74,8 @@ class AuthService:
             "enabled": bool(raw.get("enabled", True)),
             "created_at": created_at,
             "last_used_at": last_used_at,
+            "quota_limit": quota_limit,
+            "quota_used": quota_used,
         }
 
     def _load(self) -> list[dict[str, object]]:
@@ -70,6 +92,9 @@ class AuthService:
 
     @staticmethod
     def _public_item(item: dict[str, object]) -> dict[str, object]:
+        quota_limit = AuthService._normalize_quota_limit(item.get("quota_limit"))
+        quota_used = AuthService._normalize_quota_used(item.get("quota_used"))
+        quota_remaining = None if quota_limit is None else max(0, quota_limit - quota_used)
         return {
             "id": item.get("id"),
             "name": item.get("name"),
@@ -77,6 +102,9 @@ class AuthService:
             "enabled": bool(item.get("enabled", True)),
             "created_at": item.get("created_at"),
             "last_used_at": item.get("last_used_at"),
+            "quota_limit": quota_limit,
+            "quota_used": quota_used,
+            "quota_remaining": quota_remaining,
         }
 
     def list_keys(self, role: AuthRole | None = None) -> list[dict[str, object]]:
@@ -84,8 +112,9 @@ class AuthService:
             items = [item for item in self._items if role is None or item.get("role") == role]
             return [self._public_item(item) for item in items]
 
-    def create_key(self, *, role: AuthRole, name: str = "") -> tuple[dict[str, object], str]:
+    def create_key(self, *, role: AuthRole, name: str = "", quota_limit: int | None = None) -> tuple[dict[str, object], str]:
         normalized_name = self._clean(name) or ("管理员密钥" if role == "admin" else "普通用户")
+        normalized_quota_limit = self._normalize_quota_limit(quota_limit)
         raw_key = f"sk-{secrets.token_urlsafe(24)}"
         item = {
             "id": uuid.uuid4().hex[:12],
@@ -95,6 +124,8 @@ class AuthService:
             "enabled": True,
             "created_at": _now_iso(),
             "last_used_at": None,
+            "quota_limit": normalized_quota_limit,
+            "quota_used": 0,
         }
         with self._lock:
             self._items.append(item)
@@ -122,6 +153,50 @@ class AuthService:
                     next_item["name"] = self._clean(updates.get("name")) or next_item.get("name") or "普通用户"
                 if "enabled" in updates and updates.get("enabled") is not None:
                     next_item["enabled"] = bool(updates.get("enabled"))
+                if "quota_limit" in updates:
+                    next_item["quota_limit"] = self._normalize_quota_limit(updates.get("quota_limit"))
+                if "quota_used" in updates and updates.get("quota_used") is not None:
+                    next_item["quota_used"] = self._normalize_quota_used(updates.get("quota_used"))
+                quota_limit = self._normalize_quota_limit(next_item.get("quota_limit"))
+                if quota_limit is not None:
+                    next_item["quota_used"] = min(self._normalize_quota_used(next_item.get("quota_used")), quota_limit)
+                self._items[index] = next_item
+                self._save()
+                return self._public_item(next_item)
+        return None
+
+    def ensure_quota_available(self, identity: dict[str, object], amount: int) -> None:
+        if identity.get("role") != "user":
+            return
+        required = max(1, int(amount or 1))
+        item_id = self._clean(identity.get("id"))
+        with self._lock:
+            for item in self._items:
+                if item.get("id") != item_id:
+                    continue
+                quota_limit = self._normalize_quota_limit(item.get("quota_limit"))
+                if quota_limit is None:
+                    return
+                quota_used = self._normalize_quota_used(item.get("quota_used"))
+                if quota_limit - quota_used < required:
+                    raise ValueError("user key quota exhausted")
+                return
+        raise ValueError("user key not found")
+
+    def consume_quota(self, identity: dict[str, object], amount: int) -> dict[str, object] | None:
+        if identity.get("role") != "user":
+            return None
+        used_amount = max(1, int(amount or 1))
+        item_id = self._clean(identity.get("id"))
+        with self._lock:
+            for index, item in enumerate(self._items):
+                if item.get("id") != item_id:
+                    continue
+                next_item = dict(item)
+                next_item["quota_used"] = self._normalize_quota_used(next_item.get("quota_used")) + used_amount
+                quota_limit = self._normalize_quota_limit(next_item.get("quota_limit"))
+                if quota_limit is not None:
+                    next_item["quota_used"] = min(self._normalize_quota_used(next_item.get("quota_used")), quota_limit)
                 self._items[index] = next_item
                 self._save()
                 return self._public_item(next_item)

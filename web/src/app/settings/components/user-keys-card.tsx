@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Ban, CheckCircle2, Copy, KeyRound, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { Ban, CheckCircle2, Copy, Gauge, KeyRound, LoaderCircle, Plus, Save, SlidersHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -35,13 +35,34 @@ function formatDateTime(value?: string | null) {
   }).format(date);
 }
 
+function parseQuotaInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(0, Math.floor(parsed));
+}
+
+function formatQuota(value: number | null | undefined) {
+  return value === null || value === undefined ? "不限" : String(value);
+}
+
 export function UserKeysCard() {
   const didLoadRef = useRef(false);
   const [items, setItems] = useState<UserKey[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<UserKey | null>(null);
   const [name, setName] = useState("");
+  const [quotaLimit, setQuotaLimit] = useState("");
+  const [editQuotaLimit, setEditQuotaLimit] = useState("");
+  const [editQuotaUsed, setEditQuotaUsed] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [isSavingQuota, setIsSavingQuota] = useState(false);
   const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
   const [revealedKey, setRevealedKey] = useState("");
 
@@ -68,16 +89,47 @@ export function UserKeysCard() {
   const handleCreate = async () => {
     setIsCreating(true);
     try {
-      const data = await createUserKey(name.trim());
+      const data = await createUserKey(name.trim(), parseQuotaInput(quotaLimit));
       setItems(data.items);
       setRevealedKey(data.key);
       setName("");
+      setQuotaLimit("");
       setIsDialogOpen(false);
       toast.success("用户密钥已创建");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "创建用户密钥失败");
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const openQuotaDialog = (item: UserKey) => {
+    setEditingItem(item);
+    setEditQuotaLimit(item.quota_limit === null ? "" : String(item.quota_limit));
+    setEditQuotaUsed(String(item.quota_used || 0));
+  };
+
+  const handleSaveQuota = async () => {
+    if (!editingItem) {
+      return;
+    }
+    setIsSavingQuota(true);
+    setItemPending(editingItem.id, true);
+    try {
+      const nextQuotaLimit = parseQuotaInput(editQuotaLimit);
+      const nextQuotaUsed = parseQuotaInput(editQuotaUsed) ?? 0;
+      const data = await updateUserKey(editingItem.id, {
+        quota_limit: nextQuotaLimit,
+        quota_used: nextQuotaUsed,
+      });
+      setItems(data.items);
+      setEditingItem(null);
+      toast.success("用户额度已更新");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "更新用户额度失败");
+    } finally {
+      setItemPending(editingItem.id, false);
+      setIsSavingQuota(false);
     }
   };
 
@@ -142,7 +194,7 @@ export function UserKeysCard() {
               </div>
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">用户密钥管理</h2>
-                <p className="text-sm text-stone-500">为普通用户创建专用密钥；普通用户只能进入画图页，不能查看设置和号池。</p>
+                <p className="text-sm text-stone-500">为普通用户创建专用密钥，并设置可用图片额度；额度可随时调整。</p>
               </div>
             </div>
             <Button className="h-9 rounded-xl bg-stone-950 px-4 text-white hover:bg-stone-800" onClick={() => setIsDialogOpen(true)}>
@@ -194,9 +246,43 @@ export function UserKeysCard() {
                         <span>创建时间 {formatDateTime(item.created_at)}</span>
                         <span>最近使用 {formatDateTime(item.last_used_at)}</span>
                       </div>
+                      <div className="max-w-md space-y-2">
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500">
+                          <span className="inline-flex items-center gap-1 text-stone-700">
+                            <Gauge className="size-3.5" />
+                            额度 {formatQuota(item.quota_limit)}
+                          </span>
+                          <span>已用 {item.quota_used || 0}</span>
+                          <span>剩余 {formatQuota(item.quota_remaining)}</span>
+                        </div>
+                        {item.quota_limit === null ? (
+                          <div className="h-2 rounded-full bg-emerald-100">
+                            <div className="h-2 w-full rounded-full bg-emerald-400" />
+                          </div>
+                        ) : (
+                          <div className="h-2 rounded-full bg-stone-100">
+                            <div
+                              className="h-2 rounded-full bg-cyan-500 transition-all"
+                              style={{
+                                width: `${Math.min(100, Math.round(((item.quota_used || 0) / Math.max(1, item.quota_limit)) * 100))}%`,
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-9 rounded-xl border-cyan-200 bg-white px-4 text-cyan-700 hover:bg-cyan-50 hover:text-cyan-800"
+                        onClick={() => openQuotaDialog(item)}
+                        disabled={isPending}
+                      >
+                        <SlidersHorizontal className="size-4" />
+                        调整额度
+                      </Button>
                       <Button
                         type="button"
                         variant="outline"
@@ -249,6 +335,18 @@ export function UserKeysCard() {
               className="h-11 rounded-xl border-stone-200 bg-white"
             />
           </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-stone-700">初始额度（可选）</label>
+            <Input
+              type="number"
+              min={0}
+              value={quotaLimit}
+              onChange={(event) => setQuotaLimit(event.target.value)}
+              placeholder="留空表示不限制额度，例如 100"
+              className="h-11 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">每成功生成 1 张图片扣除 1 点额度。</p>
+          </div>
           <DialogFooter>
             <Button
               type="button"
@@ -267,6 +365,66 @@ export function UserKeysCard() {
             >
               {isCreating ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
               创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editingItem} onOpenChange={(open) => !open && setEditingItem(null)}>
+        <DialogContent className="rounded-2xl p-6">
+          <DialogHeader className="gap-2">
+            <DialogTitle>调整用户额度</DialogTitle>
+            <DialogDescription className="text-sm leading-6">
+              修改「{editingItem?.name}」可使用的图片额度。总额度留空表示不限制；已用额度可手动校正。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">总额度</label>
+              <Input
+                type="number"
+                min={0}
+                value={editQuotaLimit}
+                onChange={(event) => setEditQuotaLimit(event.target.value)}
+                placeholder="留空表示不限制"
+                className="h-11 rounded-xl border-stone-200 bg-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">已用额度</label>
+              <Input
+                type="number"
+                min={0}
+                value={editQuotaUsed}
+                onChange={(event) => setEditQuotaUsed(event.target.value)}
+                placeholder="0"
+                className="h-11 rounded-xl border-stone-200 bg-white"
+              />
+            </div>
+          </div>
+          {editingItem ? (
+            <div className="rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+              当前：总额度 {formatQuota(editingItem.quota_limit)}，已用 {editingItem.quota_used || 0}，剩余 {formatQuota(editingItem.quota_remaining)}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-10 rounded-xl bg-stone-100 px-5 text-stone-700 hover:bg-stone-200"
+              onClick={() => setEditingItem(null)}
+              disabled={isSavingQuota}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              className="h-10 rounded-xl bg-stone-950 px-5 text-white hover:bg-stone-800"
+              onClick={() => void handleSaveQuota()}
+              disabled={isSavingQuota}
+            >
+              {isSavingQuota ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+              保存额度
             </Button>
           </DialogFooter>
         </DialogContent>

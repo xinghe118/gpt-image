@@ -72,6 +72,9 @@ export type UserKey = {
   enabled: boolean;
   created_at: string | null;
   last_used_at: string | null;
+  quota_limit: number | null;
+  quota_used: number;
+  quota_remaining: number | null;
 };
 
 export async function login(authKey: string) {
@@ -184,14 +187,17 @@ export async function fetchUserKeys() {
   return httpRequest<{ items: UserKey[] }>("/api/auth/users");
 }
 
-export async function createUserKey(name: string) {
+export async function createUserKey(name: string, quotaLimit?: number | null) {
   return httpRequest<{ item: UserKey; key: string; items: UserKey[] }>("/api/auth/users", {
     method: "POST",
-    body: { name },
+    body: { name, quota_limit: quotaLimit ?? null },
   });
 }
 
-export async function updateUserKey(keyId: string, updates: { enabled?: boolean; name?: string }) {
+export async function updateUserKey(
+  keyId: string,
+  updates: { enabled?: boolean; name?: string; quota_limit?: number | null; quota_used?: number },
+) {
   return httpRequest<{ item: UserKey; items: UserKey[] }>(`/api/auth/users/${keyId}`, {
     method: "POST",
     body: updates,

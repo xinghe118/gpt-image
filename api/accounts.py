@@ -200,7 +200,10 @@ def create_router() -> APIRouter:
     @router.post("/api/cpa/pools/{pool_id}")
     async def update_cpa_pool(pool_id: str, body: CPAPoolUpdateRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        pool = cpa_config.update_pool(pool_id, body.model_dump(exclude_none=True))
+        updates = body.model_dump(exclude_none=True)
+        if "secret_key" in updates and not str(updates.get("secret_key") or "").strip():
+            updates.pop("secret_key")
+        pool = cpa_config.update_pool(pool_id, updates)
         if pool is None:
             raise HTTPException(status_code=404, detail={"error": "pool not found"})
         return {"pool": sanitize_cpa_pool(pool), "pools": sanitize_cpa_pools(cpa_config.list_pools())}

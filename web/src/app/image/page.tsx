@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Gauge, History, ImageIcon, LoaderCircle, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Activity, Gauge, History, ImageIcon, LoaderCircle, Pencil, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
@@ -33,50 +33,76 @@ import {
 
 const ACTIVE_CONVERSATION_STORAGE_KEY = "gpt-image:image_active_conversation_id";
 const IMAGE_SIZE_STORAGE_KEY = "gpt-image:image_last_size";
+const STYLE_PRESETS_STORAGE_KEY = "gpt-image:image_style_presets";
 const LEGACY_STORAGE_PREFIX = "chatgpt" + "2api";
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_last_size`;
 const activeConversationQueueIds = new Set<string>();
-const STYLE_PRESETS = [
+
+type StylePreset = {
+  id: string;
+  title: string;
+  tag: string;
+  prompt: string;
+  builtin?: boolean;
+};
+
+const DEFAULT_STYLE_PRESETS: StylePreset[] = [
   {
+    id: "cinematic-story",
     title: "电影级叙事",
     tag: "Cinematic",
     prompt: "电影级构图，主体明确，真实镜头语言，柔和但有方向性的光线，浅景深，细腻胶片颗粒，高级色彩分级，画面具有故事感",
+    builtin: true,
   },
   {
+    id: "commercial-product",
     title: "商业产品海报",
     tag: "Product",
     prompt: "高端商业产品摄影，干净背景，精准布光，产品边缘清晰，材质质感突出，适合广告海报，留有排版空间，画面高级克制",
+    builtin: true,
   },
   {
+    id: "realistic-photo",
     title: "写实摄影",
     tag: "Photo",
     prompt: "真实摄影风格，自然光影，真实材质和细节，镜头焦段合理，色彩不过度饱和，画面可信且有生活质感",
+    builtin: true,
   },
   {
+    id: "commerce-main-image",
     title: "电商主图",
     tag: "Commerce",
     prompt: "电商主图构图，主体居中突出，背景简洁明亮，卖点清晰，高清质感，适合商品展示，避免杂乱元素",
+    builtin: true,
   },
   {
+    id: "modern-oriental",
     title: "东方新中式",
     tag: "Oriental",
     prompt: "东方新中式美学，留白克制，温润材质，低饱和自然色，优雅构图，融合现代设计与传统意境",
+    builtin: true,
   },
   {
+    id: "trend-illustration",
     title: "潮流插画",
     tag: "Illustration",
     prompt: "潮流插画风格，形体概括有力，色块干净，细节精致，具有品牌视觉感，适合封面或社交媒体传播",
+    builtin: true,
   },
   {
+    id: "ui-icon",
     title: "UI 图标",
     tag: "Icon",
     prompt: "精致 UI 图标设计，简洁几何造型，统一透视，柔和阴影，清晰轮廓，适合应用图标或功能入口",
+    builtin: true,
   },
   {
+    id: "architecture-space",
     title: "建筑空间",
     tag: "Space",
     prompt: "高级建筑空间摄影，空间层次清晰，自然采光，材质细节丰富，构图稳定，呈现安静、现代、可居住的氛围",
+    builtin: true,
   },
 ];
 
@@ -111,6 +137,35 @@ function createId() {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeStylePresets(value: unknown): StylePreset[] {
+  if (!Array.isArray(value)) {
+    return DEFAULT_STYLE_PRESETS;
+  }
+
+  const normalized = value
+    .map((item): StylePreset | null => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const preset = item as Partial<StylePreset>;
+      const title = String(preset.title || "").trim();
+      const prompt = String(preset.prompt || "").trim();
+      if (!title || !prompt) {
+        return null;
+      }
+      return {
+        id: String(preset.id || createId()),
+        title,
+        tag: String(preset.tag || "Custom").trim() || "Custom",
+        prompt,
+        builtin: Boolean(preset.builtin),
+      };
+    })
+    .filter((item): item is StylePreset => Boolean(item));
+
+  return normalized.length ? normalized : DEFAULT_STYLE_PRESETS;
 }
 
 function readFileAsDataUrl(file: File) {
@@ -243,6 +298,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [stylePresets, setStylePresets] = useState<StylePreset[]>(DEFAULT_STYLE_PRESETS);
+  const [isPresetEditorOpen, setIsPresetEditorOpen] = useState(false);
+  const [editingPreset, setEditingPreset] = useState<StylePreset | null>(null);
+  const [presetTitle, setPresetTitle] = useState("");
+  const [presetTag, setPresetTag] = useState("");
+  const [presetPrompt, setPresetPrompt] = useState("");
 
   const parsedCount = useMemo(() => Math.max(1, Math.min(10, Number(imageCount) || 1)), [imageCount]);
   const selectedConversation = useMemo(
@@ -261,6 +322,107 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const rawPresets = window.localStorage.getItem(STYLE_PRESETS_STORAGE_KEY);
+    if (!rawPresets) {
+      return;
+    }
+    try {
+      setStylePresets(normalizeStylePresets(JSON.parse(rawPresets)));
+    } catch {
+      setStylePresets(DEFAULT_STYLE_PRESETS);
+    }
+  }, []);
+
+  const persistStylePresets = useCallback((items: StylePreset[]) => {
+    const normalized = normalizeStylePresets(items);
+    setStylePresets(normalized);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(STYLE_PRESETS_STORAGE_KEY, JSON.stringify(normalized));
+    }
+  }, []);
+
+  const openCreatePreset = useCallback(() => {
+    setEditingPreset(null);
+    setPresetTitle("");
+    setPresetTag("Custom");
+    setPresetPrompt("");
+    setIsPresetEditorOpen(true);
+  }, []);
+
+  const openEditPreset = useCallback((preset: StylePreset) => {
+    setEditingPreset(preset);
+    setPresetTitle(preset.title);
+    setPresetTag(preset.tag);
+    setPresetPrompt(preset.prompt);
+    setIsPresetEditorOpen(true);
+  }, []);
+
+  const handleSavePreset = useCallback(() => {
+    const title = presetTitle.trim();
+    const tag = presetTag.trim() || "Custom";
+    const prompt = presetPrompt.trim();
+
+    if (!title) {
+      toast.error("请输入预设名称");
+      return;
+    }
+    if (!prompt) {
+      toast.error("请输入预设提示词");
+      return;
+    }
+
+    if (editingPreset) {
+      persistStylePresets(
+        stylePresets.map((preset) =>
+          preset.id === editingPreset.id
+            ? {
+                ...preset,
+                title,
+                tag,
+                prompt,
+              }
+            : preset,
+        ),
+      );
+      toast.success("风格预设已更新");
+    } else {
+      persistStylePresets([
+        ...stylePresets,
+        {
+          id: createId(),
+          title,
+          tag,
+          prompt,
+          builtin: false,
+        },
+      ]);
+      toast.success("已新增风格预设");
+    }
+
+    setIsPresetEditorOpen(false);
+  }, [editingPreset, persistStylePresets, presetPrompt, presetTag, presetTitle, stylePresets]);
+
+  const handleDeletePreset = useCallback(
+    (preset: StylePreset) => {
+      if (preset.builtin) {
+        toast.error("默认预设只能编辑，不能删除");
+        return;
+      }
+      persistStylePresets(stylePresets.filter((item) => item.id !== preset.id));
+      toast.success("已删除自定义预设");
+    },
+    [persistStylePresets, stylePresets],
+  );
+
+  const resetStylePresets = useCallback(() => {
+    persistStylePresets(DEFAULT_STYLE_PRESETS);
+    toast.success("已恢复默认风格预设");
+  }, [persistStylePresets]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1050,20 +1212,62 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               </div>
               <div>
-                <div className="mb-2 text-xs font-medium text-slate-500">风格预设</div>
-                <div className="grid gap-2">
-                  {STYLE_PRESETS.map((preset) => (
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-slate-500">风格预设</div>
+                  <div className="flex items-center gap-1">
                     <button
-                      key={preset.title}
-                      className="rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-cyan-200 hover:bg-cyan-50/60"
-                      onClick={() => setImagePrompt((value) => appendPromptSegment(value, preset.prompt))}
+                      className="inline-flex h-7 items-center gap-1 rounded-lg bg-slate-950 px-2 text-xs font-medium text-white transition hover:bg-slate-800"
+                      onClick={openCreatePreset}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold text-slate-900">{preset.title}</span>
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{preset.tag}</span>
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{preset.prompt}</p>
+                      <Plus className="size-3.5" />
+                      新增
                     </button>
+                    <button
+                      className="grid h-7 w-7 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-cyan-200 hover:text-cyan-700"
+                      title="恢复默认预设"
+                      onClick={resetStylePresets}
+                    >
+                      <RotateCcw className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  {stylePresets.map((preset) => (
+                    <div
+                      key={preset.id}
+                      className="rounded-xl border border-slate-200 bg-white transition hover:border-cyan-200 hover:bg-cyan-50/60"
+                    >
+                      <button
+                        className="w-full p-3 text-left"
+                        onClick={() => setImagePrompt((value) => appendPromptSegment(value, preset.prompt))}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-slate-900">{preset.title}</span>
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                            {preset.tag}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{preset.prompt}</p>
+                      </button>
+                      <div className="flex items-center gap-2 px-3 pb-3">
+                        <button
+                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-600 transition hover:border-cyan-200 hover:text-cyan-700"
+                          onClick={() => openEditPreset(preset)}
+                        >
+                          <Pencil className="size-3.5" />
+                          编辑
+                        </button>
+                        {!preset.builtin ? (
+                          <button
+                            className="inline-flex h-7 items-center gap-1 rounded-lg border border-rose-100 bg-rose-50 px-2 text-xs font-medium text-rose-600 transition hover:border-rose-200 hover:bg-rose-100"
+                            onClick={() => handleDeletePreset(preset)}
+                          >
+                            <Trash2 className="size-3.5" />
+                            删除
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -1071,6 +1275,61 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           </div>
         </aside>
       </section>
+
+      <Dialog open={isPresetEditorOpen} onOpenChange={setIsPresetEditorOpen}>
+        <DialogContent className="w-[92vw] max-w-[560px] rounded-2xl border-slate-200 bg-white p-6 shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-950">
+              <Sparkles className="size-5 text-cyan-700" />
+              {editingPreset ? "编辑风格预设" : "新增风格预设"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px]">
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">预设名称</span>
+                <input
+                  className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                  value={presetTitle}
+                  onChange={(event) => setPresetTitle(event.target.value)}
+                  placeholder="例如：高级杂志封面"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">标签</span>
+                <input
+                  className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                  value={presetTag}
+                  onChange={(event) => setPresetTag(event.target.value)}
+                  placeholder="Editorial"
+                />
+              </label>
+            </div>
+            <label className="block">
+              <span className="text-xs font-medium text-slate-500">提示词片段</span>
+              <textarea
+                className="mt-1 min-h-32 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm leading-6 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                value={presetPrompt}
+                onChange={(event) => setPresetPrompt(event.target.value)}
+                placeholder="描述这个风格会追加到提示词里的视觉要求、光影、构图和材质..."
+              />
+            </label>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl border-slate-200 bg-white text-slate-700"
+              onClick={() => setIsPresetEditorOpen(false)}
+            >
+              取消
+            </Button>
+            <Button className="h-10 rounded-xl bg-slate-950 text-white hover:bg-slate-800" onClick={handleSavePreset}>
+              <Save className="size-4" />
+              保存
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ImageLightbox
         images={lightboxImages}

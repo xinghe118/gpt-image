@@ -53,6 +53,22 @@ GPT_IMAGE_AUTH_KEY=你的管理员登录密钥
 
 部署完成后访问 Render 分配的域名，用这个管理员密钥登录即可。PostgreSQL 会持久保存账号池和用户密钥；首次启动时会自动建表，不需要手动执行迁移。
 
+### VPS 一键部署
+
+在 Ubuntu/Debian VPS 上执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xinghe118/gpt-image/main/scripts/vps-install.sh | sudo bash
+```
+
+脚本会自动安装 Docker、创建 PostgreSQL、写入部署配置并启动服务。默认访问地址：
+
+```text
+http://服务器IP:3000
+```
+
+更多参数、Nginx 反代和备份方式见：[docs/vps-deploy.md](docs/vps-deploy.md)
+
 ### 使用 Docker Compose
 
 ```bash

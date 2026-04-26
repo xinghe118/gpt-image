@@ -1,0 +1,91 @@
+# VPS 一键部署
+
+推荐在 Ubuntu 22.04/24.04 或 Debian 12 上部署。脚本会自动安装 Docker，创建 PostgreSQL，并启动 GPT Image。
+
+## 一条命令部署
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xinghe118/gpt-image/main/scripts/vps-install.sh | sudo bash
+```
+
+脚本会提示输入管理员登录密钥：
+
+```text
+Enter admin login key:
+```
+
+可选输入公网地址，例如：
+
+```text
+https://image.example.com
+```
+
+如果暂时没有域名，直接回车即可，部署后访问：
+
+```text
+http://服务器IP:3000
+```
+
+## 非交互部署
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xinghe118/gpt-image/main/scripts/vps-install.sh \
+  | sudo GPT_IMAGE_AUTH_KEY="your-admin-key" GPT_IMAGE_BASE_URL="https://image.example.com" bash
+```
+
+可选变量：
+
+```bash
+APP_DIR=/opt/gpt-image
+APP_PORT=3000
+APP_IMAGE=ghcr.io/xinghe118/gpt-image:latest
+POSTGRES_DB=gpt_image
+POSTGRES_USER=gpt_image
+POSTGRES_PASSWORD=change-this-password
+```
+
+## 常用命令
+
+```bash
+cd /opt/gpt-image
+docker compose ps
+docker compose logs -f app
+docker compose pull && docker compose up -d
+```
+
+## 数据备份
+
+```bash
+cd /opt/gpt-image
+docker compose exec postgres pg_dump -U gpt_image gpt_image > backup.sql
+```
+
+恢复：
+
+```bash
+cd /opt/gpt-image
+cat backup.sql | docker compose exec -T postgres psql -U gpt_image gpt_image
+```
+
+## Nginx 反代
+
+```nginx
+server {
+    listen 80;
+    server_name image.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+HTTPS：
+
+```bash
+sudo certbot --nginx -d image.example.com
+```

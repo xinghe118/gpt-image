@@ -45,6 +45,7 @@ POSTGRES_DB=gpt_image
 POSTGRES_USER=gpt_image
 POSTGRES_PASSWORD=change-this-password
 POSTGRES_CONTAINER=gpt-image-postgres
+RESET_POSTGRES_DATA=false
 ```
 
 ## 数据库密码检查
@@ -53,7 +54,15 @@ POSTGRES_CONTAINER=gpt-image-postgres
 
 如果已有容器，脚本会用你输入的 `POSTGRES_USER`、`POSTGRES_DB` 和 `POSTGRES_PASSWORD` 执行连接测试，测试通过才会继续部署。这样可以提前发现“应用密码和旧数据库真实密码不一致”的问题，避免容器反复重启。
 
-如果测试失败，可以在 VPS 上修正数据库用户密码：
+如果测试失败，脚本会询问是否删除旧数据库数据并重新初始化。全新部署或旧数据不需要保留时，可以输入 `y` 继续。
+
+非交互部署时，如确认可以清空旧数据库，可显式开启：
+
+```bash
+RESET_POSTGRES_DATA=true
+```
+
+如果需要保留旧数据，可以在 VPS 上修正数据库用户密码：
 
 ```bash
 cd /opt/gpt-image
@@ -69,7 +78,7 @@ ALTER USER gpt_image WITH PASSWORD '你的新密码';
 
 然后重新运行安装脚本。
 
-如果是全新部署且不需要旧数据，也可以删除旧数据库卷后重新安装：
+也可以手动删除旧数据库卷后重新安装：
 
 ```bash
 cd /opt/gpt-image

@@ -1,6 +1,6 @@
 # VPS 一键部署
 
-推荐在 Ubuntu 22.04/24.04 或 Debian 12 上部署。脚本会自动安装 Docker，创建 PostgreSQL，并启动 GPT Image。
+推荐在 Ubuntu 22.04/24.04 或 Debian 12 上部署。脚本会自动安装 Docker，检查 PostgreSQL 状态，确认数据库密码可用后再启动 GPT Image。
 
 ## 一条命令部署
 
@@ -8,10 +8,12 @@
 curl -fsSL https://raw.githubusercontent.com/xinghe118/gpt-image/main/scripts/vps-install.sh | sudo bash
 ```
 
-脚本会提示输入管理员登录密钥：
+脚本会提示输入管理员登录密钥、可选公网地址和 PostgreSQL 密码：
 
 ```text
 Enter admin login key:
+Enter public URL, optional, e.g. https://img.example.com:
+Enter PostgreSQL password:
 ```
 
 可选输入公网地址，例如：
@@ -20,7 +22,7 @@ Enter admin login key:
 https://image.example.com
 ```
 
-如果暂时没有域名，直接回车即可，部署后访问：
+如果暂时没有域名，公网地址直接回车即可，部署后访问：
 
 ```text
 http://服务器IP:3000
@@ -42,6 +44,36 @@ APP_IMAGE=ghcr.io/xinghe118/gpt-image:latest
 POSTGRES_DB=gpt_image
 POSTGRES_USER=gpt_image
 POSTGRES_PASSWORD=change-this-password
+POSTGRES_CONTAINER=gpt-image-postgres
+```
+
+## 数据库密码检查
+
+安装脚本会先检查 VPS 上是否已有名为 `gpt-image-postgres` 的 PostgreSQL 容器。
+
+如果已有容器，脚本会用你输入的 `POSTGRES_USER`、`POSTGRES_DB` 和 `POSTGRES_PASSWORD` 执行连接测试，测试通过才会继续部署。这样可以提前发现“应用密码和旧数据库真实密码不一致”的问题，避免容器反复重启。
+
+如果测试失败，可以在 VPS 上修正数据库用户密码：
+
+```bash
+cd /opt/gpt-image
+docker compose exec postgres psql -U postgres -d postgres
+```
+
+进入 PostgreSQL 后执行：
+
+```sql
+ALTER USER gpt_image WITH PASSWORD '你的新密码';
+\q
+```
+
+然后重新运行安装脚本。
+
+如果是全新部署且不需要旧数据，也可以删除旧数据库卷后重新安装：
+
+```bash
+cd /opt/gpt-image
+docker compose down -v
 ```
 
 ## 常用命令

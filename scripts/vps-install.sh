@@ -7,6 +7,7 @@ APP_IMAGE="${APP_IMAGE:-ghcr.io/xinghe118/gpt-image:latest}"
 POSTGRES_DB="${POSTGRES_DB:-gpt_image}"
 POSTGRES_USER="${POSTGRES_USER:-gpt_image}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-gpt-image-postgres}"
 GPT_IMAGE_AUTH_KEY="${GPT_IMAGE_AUTH_KEY:-}"
 GPT_IMAGE_BASE_URL="${GPT_IMAGE_BASE_URL:-}"
 
@@ -75,6 +76,81 @@ generate_password() {
   tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
 }
 
+container_exists() {
+  local container_name="$1"
+  docker ps -a --format '{{.Names}}' | grep -Fxq "$container_name"
+}
+
+container_running() {
+  local container_name="$1"
+  docker ps --format '{{.Names}}' | grep -Fxq "$container_name"
+}
+
+ensure_postgres_password() {
+  if [ -n "$POSTGRES_PASSWORD" ]; then
+    return
+  fi
+
+  if [ -t 0 ] || [ -r /dev/tty ]; then
+    prompt_secret POSTGRES_PASSWORD "Enter PostgreSQL password"
+    return
+  fi
+
+  POSTGRES_PASSWORD="$(generate_password)"
+  log "POSTGRES_PASSWORD was not provided in non-interactive mode; generated a new password."
+}
+
+test_existing_postgres() {
+  if ! container_exists "$POSTGRES_CONTAINER"; then
+    log "No existing PostgreSQL container named $POSTGRES_CONTAINER was found. A new PostgreSQL service will be created."
+    return
+  fi
+
+  log "Found existing PostgreSQL container: $POSTGRES_CONTAINER"
+  if ! container_running "$POSTGRES_CONTAINER"; then
+    log "Starting existing PostgreSQL container for connection test..."
+    docker start "$POSTGRES_CONTAINER" >/dev/null
+  fi
+
+  log "Testing PostgreSQL connection before writing deployment files..."
+  if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select 1" >/dev/null 2>&1; then
+    log "PostgreSQL connection test passed."
+    return
+  fi
+
+  fail "PostgreSQL connection test failed. The password, user, or database does not match the existing container.
+
+Fix it on the VPS, then run this installer again:
+  docker compose exec postgres psql -U postgres -d postgres
+  ALTER USER ${POSTGRES_USER} WITH PASSWORD 'your-password';
+  \\q
+
+Or remove the old database volume only if you do not need the old data:
+  cd ${APP_DIR}
+  docker compose down -v"
+}
+
+test_started_postgres() {
+  log "Waiting for PostgreSQL health check..."
+  for _ in $(seq 1 30); do
+    if docker compose -f "$APP_DIR/docker-compose.yml" exec -T postgres \
+      pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+
+  log "Testing PostgreSQL connection after startup..."
+  if docker compose -f "$APP_DIR/docker-compose.yml" exec -T postgres \
+    env PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select 1" >/dev/null 2>&1; then
+    log "PostgreSQL connection test passed."
+    return
+  fi
+
+  fail "PostgreSQL started but password authentication failed. Check POSTGRES_PASSWORD and the existing postgres_data volume."
+}
+
 install_docker() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     log "Docker and Docker Compose are already installed."
@@ -108,10 +184,6 @@ write_files() {
   mkdir -p "$APP_DIR/data"
   chmod 700 "$APP_DIR"
 
-  if [ -z "$POSTGRES_PASSWORD" ]; then
-    POSTGRES_PASSWORD="$(generate_password)"
-  fi
-
   cat >"$APP_DIR/.env" <<EOF
 GPT_IMAGE_AUTH_KEY=${GPT_IMAGE_AUTH_KEY}
 GPT_IMAGE_BASE_URL=${GPT_IMAGE_BASE_URL}
@@ -138,7 +210,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: gpt-image-postgres
+    container_name: ${POSTGRES_CONTAINER}
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -160,8 +232,11 @@ EOF
 start_stack() {
   log "Pulling images..."
   docker compose -f "$APP_DIR/docker-compose.yml" pull
+  log "Starting PostgreSQL..."
+  docker compose -f "$APP_DIR/docker-compose.yml" up -d postgres
+  test_started_postgres
   log "Starting GPT Image..."
-  docker compose -f "$APP_DIR/docker-compose.yml" up -d
+  docker compose -f "$APP_DIR/docker-compose.yml" up -d app
 }
 
 print_done() {
@@ -195,6 +270,8 @@ main() {
   prompt_secret GPT_IMAGE_AUTH_KEY "Enter admin login key"
   prompt_optional GPT_IMAGE_BASE_URL "Enter public URL, optional, e.g. https://img.example.com"
   install_docker
+  ensure_postgres_password
+  test_existing_postgres
   write_files
   start_stack
   print_done

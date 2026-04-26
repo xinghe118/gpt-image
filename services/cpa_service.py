@@ -67,6 +67,15 @@ def _management_headers(secret_key: str) -> dict[str, str]:
     }
 
 
+def _management_base_url(base_url: str) -> str:
+    value = str(base_url or "").strip().rstrip("/")
+    for suffix in ("/v1", "/v0"):
+        if value.lower().endswith(suffix):
+            value = value[: -len(suffix)].rstrip("/")
+            break
+    return value
+
+
 class CPAConfig:
     def __init__(self, store_file: Path):
         self._store_file = store_file
@@ -162,26 +171,46 @@ def list_remote_files(pool: dict) -> list[dict]:
     if not base_url or not secret_key:
         return []
 
-    url = f"{base_url.rstrip('/')}/v0/management/auth-files"
+    url = f"{_management_base_url(base_url)}/v0/management/auth-files"
     session = Session(**proxy_settings.build_session_kwargs(verify=True))
     try:
         response = session.get(url, headers=_management_headers(secret_key), timeout=30)
         if not response.ok:
-            raise RuntimeError(f"remote list failed: HTTP {response.status_code}")
+            message = str(getattr(response, "text", "") or "").strip()
+            if len(message) > 240:
+                message = message[:240] + "..."
+            raise RuntimeError(f"remote list failed: HTTP {response.status_code}{f' - {message}' if message else ''}")
         payload = response.json()
+    except Exception as exc:
+        raise RuntimeError(f"CPA 同步失败：{exc}") from exc
     finally:
         session.close()
 
-    files = payload.get("files") if isinstance(payload, dict) else None
+    files = None
+    if isinstance(payload, dict):
+        for key in ("files", "data", "items", "auth_files"):
+            candidate = payload.get(key)
+            if isinstance(candidate, list):
+                files = candidate
+                break
+        if files is None and isinstance(payload.get("data"), dict):
+            data = payload.get("data") or {}
+            for key in ("files", "items", "auth_files"):
+                candidate = data.get(key)
+                if isinstance(candidate, list):
+                    files = candidate
+                    break
+    elif isinstance(payload, list):
+        files = payload
     if not isinstance(files, list):
-        raise RuntimeError("remote list payload is invalid")
+        raise RuntimeError("CPA 同步失败：远程返回格式无效，未找到 files/data/items 列表")
 
     items: list[dict] = []
     for item in files:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or "").strip()
-        email = str(item.get("email") or item.get("account") or "").strip()
+        name = str(item.get("name") or item.get("filename") or item.get("file_name") or item.get("id") or "").strip()
+        email = str(item.get("email") or item.get("account") or item.get("username") or "").strip()
         if not name:
             continue
         items.append({"name": name, "email": email})
@@ -195,7 +224,7 @@ def fetch_remote_access_token(pool: dict, file_name: str) -> tuple[str | None, s
     if not base_url or not secret_key or not file_name:
         return None, "invalid request"
 
-    url = f"{base_url.rstrip('/')}/v0/management/auth-files/download"
+    url = f"{_management_base_url(base_url)}/v0/management/auth-files/download"
     session = Session(**proxy_settings.build_session_kwargs(verify=True))
     try:
         response = session.get(url, headers=_management_headers(secret_key), params={"name": file_name}, timeout=30)

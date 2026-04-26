@@ -8,12 +8,13 @@
 curl -fsSL https://raw.githubusercontent.com/xinghe118/gpt-image/main/scripts/vps-install.sh | sudo bash
 ```
 
-脚本会提示输入管理员登录密钥、可选公网地址和 PostgreSQL 密码：
+脚本会提示输入管理员登录密钥、可选公网地址和 PostgreSQL 密码。SQL 密码需要输入两次，先做本地确认，再进行数据库连接测试：
 
 ```text
 Enter admin login key:
 Enter public URL, optional, e.g. https://img.example.com:
 Enter PostgreSQL password:
+Confirm PostgreSQL password:
 ```
 
 可选输入公网地址，例如：

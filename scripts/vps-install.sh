@@ -152,6 +152,11 @@ ensure_postgres_password() {
 
   if [ -t 0 ] || [ -r /dev/tty ]; then
     prompt_secret POSTGRES_PASSWORD "Enter PostgreSQL password"
+    local postgres_password_confirm=""
+    prompt_secret postgres_password_confirm "Confirm PostgreSQL password"
+    if [ "$POSTGRES_PASSWORD" != "$postgres_password_confirm" ]; then
+      fail "PostgreSQL passwords do not match. Please run the installer again."
+    fi
     return
   fi
 

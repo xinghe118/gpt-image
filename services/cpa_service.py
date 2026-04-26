@@ -60,28 +60,18 @@ def _normalize_pool(raw: dict) -> dict:
     }
 
 
-def _management_header_variants(secret_key: str) -> list[dict[str, str]]:
-    base = {"Accept": "application/json"}
-    return [
-        {**base, "X-Management-Key": secret_key},
-        {**base, "Authorization": f"Bearer {secret_key}"},
-        {**base, "X-API-Key": secret_key},
-    ]
+def _management_headers(secret_key: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {secret_key}",
+        "Accept": "application/json",
+    }
 
 
-def _get_management_json(session: Session, url: str, secret_key: str, *, params: dict | None = None) -> object:
-    last_error = ""
-    for headers in _management_header_variants(secret_key):
-        response = session.get(url, headers=headers, params=params, timeout=30)
-        if response.ok:
-            return response.json()
-        message = str(getattr(response, "text", "") or "").strip()
-        if len(message) > 240:
-            message = message[:240] + "..."
-        last_error = f"HTTP {response.status_code}{f' - {message}' if message else ''}"
-        if response.status_code not in {401, 403}:
-            break
-    raise RuntimeError(f"remote list failed: {last_error or 'unknown error'}")
+def _response_error(response) -> str:
+    message = str(getattr(response, "text", "") or "").strip()
+    if len(message) > 240:
+        message = message[:240] + "..."
+    return f"HTTP {response.status_code}{f' - {message}' if message else ''}"
 
 
 def _management_base_url(base_url: str) -> str:
@@ -191,7 +181,10 @@ def list_remote_files(pool: dict) -> list[dict]:
     url = f"{_management_base_url(base_url)}/v0/management/auth-files"
     session = Session(**proxy_settings.build_session_kwargs(verify=True))
     try:
-        payload = _get_management_json(session, url, secret_key)
+        response = session.get(url, headers=_management_headers(secret_key), timeout=30)
+        if not response.ok:
+            raise RuntimeError(f"remote list failed: {_response_error(response)}")
+        payload = response.json()
     except Exception as exc:
         raise RuntimeError(f"CPA 同步失败：{exc}") from exc
     finally:
@@ -238,7 +231,10 @@ def fetch_remote_access_token(pool: dict, file_name: str) -> tuple[str | None, s
     url = f"{_management_base_url(base_url)}/v0/management/auth-files/download"
     session = Session(**proxy_settings.build_session_kwargs(verify=True))
     try:
-        payload = _get_management_json(session, url, secret_key, params={"name": file_name})
+        response = session.get(url, headers=_management_headers(secret_key), params={"name": file_name}, timeout=30)
+        if not response.ok:
+            return None, _response_error(response)
+        payload = response.json()
     except Exception as exc:
         return None, str(exc)
     finally:

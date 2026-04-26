@@ -55,6 +55,14 @@ export type SettingsConfig = {
   base_url?: string;
   refresh_account_interval_minute?: number | string;
   show_image_model_selector?: boolean;
+  object_storage_enabled?: boolean;
+  object_storage_endpoint?: string;
+  object_storage_bucket?: string;
+  object_storage_region?: string;
+  object_storage_access_key_id?: string;
+  object_storage_secret_access_key?: string;
+  object_storage_public_base_url?: string;
+  object_storage_prefix?: string;
   [key: string]: unknown;
 };
 
@@ -452,10 +460,26 @@ export async function testProxy(url?: string) {
 export type StorageInfo = {
   backend: Record<string, unknown>;
   health: Record<string, unknown>;
+  app_data: Record<string, unknown>;
+  object_storage: Record<string, unknown>;
 };
 
 export async function fetchStorageInfo() {
   return httpRequest<StorageInfo>("/api/storage/info");
+}
+
+export async function migrateStorageToDatabase() {
+  return httpRequest<{ result: Record<string, unknown> }>("/api/storage/migrate-to-database", {
+    method: "POST",
+    body: {},
+  });
+}
+
+export async function testObjectStorage() {
+  return httpRequest<{ result: Record<string, unknown> }>("/api/object-storage/test", {
+    method: "POST",
+    body: {},
+  });
 }
 
 export type ActivityLog = {

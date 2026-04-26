@@ -28,6 +28,17 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     proxy: typeof config.proxy === "string" ? config.proxy : "",
     base_url: typeof config.base_url === "string" ? config.base_url : "",
     show_image_model_selector: config.show_image_model_selector !== false,
+    object_storage_enabled: config.object_storage_enabled === true,
+    object_storage_endpoint: typeof config.object_storage_endpoint === "string" ? config.object_storage_endpoint : "",
+    object_storage_bucket: typeof config.object_storage_bucket === "string" ? config.object_storage_bucket : "",
+    object_storage_region: typeof config.object_storage_region === "string" ? config.object_storage_region : "auto",
+    object_storage_access_key_id:
+      typeof config.object_storage_access_key_id === "string" ? config.object_storage_access_key_id : "",
+    object_storage_secret_access_key:
+      typeof config.object_storage_secret_access_key === "string" ? config.object_storage_secret_access_key : "",
+    object_storage_public_base_url:
+      typeof config.object_storage_public_base_url === "string" ? config.object_storage_public_base_url : "",
+    object_storage_prefix: typeof config.object_storage_prefix === "string" ? config.object_storage_prefix : "images",
   };
 }
 
@@ -82,6 +93,7 @@ type SettingsStore = {
   setProxy: (value: string) => void;
   setBaseUrl: (value: string) => void;
   setShowImageModelSelector: (value: boolean) => void;
+  setConfigValue: (key: string, value: unknown) => void;
 
   loadPools: (silent?: boolean) => Promise<void>;
   openAddDialog: () => void;
@@ -163,6 +175,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         proxy: config.proxy.trim(),
         base_url: String(config.base_url || "").trim(),
         show_image_model_selector: config.show_image_model_selector !== false,
+        object_storage_endpoint: String(config.object_storage_endpoint || "").trim(),
+        object_storage_bucket: String(config.object_storage_bucket || "").trim(),
+        object_storage_region: String(config.object_storage_region || "auto").trim() || "auto",
+        object_storage_access_key_id: String(config.object_storage_access_key_id || "").trim(),
+        object_storage_secret_access_key: String(config.object_storage_secret_access_key || "").trim(),
+        object_storage_public_base_url: String(config.object_storage_public_base_url || "").trim(),
+        object_storage_prefix: String(config.object_storage_prefix || "images").trim(),
       });
       set({
         config: normalizeConfig(data.config),
@@ -226,6 +245,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         config: {
           ...state.config,
           show_image_model_selector: value,
+        },
+      };
+    });
+  },
+
+  setConfigValue: (key, value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          [key]: value,
         },
       };
     });

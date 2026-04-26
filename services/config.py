@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from services.storage.base import StorageBackend
 
@@ -27,6 +28,14 @@ def _normalize_auth_key(value: object) -> str:
 
 def _is_invalid_auth_key(value: object) -> bool:
     return _normalize_auth_key(value) == ""
+
+
+def _as_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "on", "yes", "是", "启用", "开启"}
+    return bool(value)
 
 
 def _read_json_object(path: Path, *, name: str) -> dict[str, object]:
@@ -137,6 +146,24 @@ class ConfigStore:
     def default_image_model(self) -> str:
         return "gpt-image-2"
 
+    def object_storage_config(self) -> dict[str, Any]:
+        return {
+            "enabled": _as_bool(self.data.get("object_storage_enabled"), False),
+            "endpoint": str(self.data.get("object_storage_endpoint") or "").strip().rstrip("/"),
+            "bucket": str(self.data.get("object_storage_bucket") or "").strip(),
+            "region": str(self.data.get("object_storage_region") or "auto").strip() or "auto",
+            "access_key_id": str(self.data.get("object_storage_access_key_id") or "").strip(),
+            "secret_access_key": str(self.data.get("object_storage_secret_access_key") or "").strip(),
+            "public_base_url": str(self.data.get("object_storage_public_base_url") or "").strip().rstrip("/"),
+            "prefix": str(self.data.get("object_storage_prefix") or "images").strip().strip("/"),
+        }
+
+    def public_object_storage_config(self) -> dict[str, Any]:
+        data = self.object_storage_config()
+        secret = data.pop("secret_access_key", "")
+        data["has_secret_access_key"] = bool(secret)
+        return data
+
     @property
     def app_version(self) -> str:
         try:
@@ -148,6 +175,17 @@ class ConfigStore:
     def get(self) -> dict[str, object]:
         data = dict(self.data)
         data.pop("auth-key", None)
+        object_storage = self.public_object_storage_config()
+        data.setdefault("show_image_model_selector", self.show_image_model_selector)
+        data.setdefault("object_storage_enabled", object_storage["enabled"])
+        data.setdefault("object_storage_endpoint", object_storage["endpoint"])
+        data.setdefault("object_storage_bucket", object_storage["bucket"])
+        data.setdefault("object_storage_region", object_storage["region"])
+        data.setdefault("object_storage_access_key_id", object_storage["access_key_id"])
+        data.setdefault("object_storage_secret_access_key", "")
+        data.setdefault("object_storage_public_base_url", object_storage["public_base_url"])
+        data.setdefault("object_storage_prefix", object_storage["prefix"])
+        data["object_storage_has_secret_access_key"] = object_storage["has_secret_access_key"]
         return data
 
     def get_proxy_settings(self) -> str:

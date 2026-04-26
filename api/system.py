@@ -6,9 +6,12 @@ from pydantic import BaseModel, ConfigDict
 
 from api.support import require_admin, require_identity
 from services.activity_log_service import activity_log_service
-from services.config import config
+from services.app_data_store import app_data_store
+from services.config import DATA_DIR, config
 from services.image_library_service import image_library_service
+from services.object_storage_service import object_storage_service
 from services.proxy_service import test_proxy
+from services.storage.json_storage import JSONStorageBackend
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -68,7 +71,13 @@ def create_router(app_version: str) -> APIRouter:
     @router.post("/api/settings")
     async def save_settings(body: SettingsUpdateRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        return {"config": config.update(body.model_dump(mode="python"))}
+        updates = body.model_dump(mode="python")
+        if (
+            "object_storage_secret_access_key" in updates
+            and not str(updates.get("object_storage_secret_access_key") or "").strip()
+        ):
+            updates.pop("object_storage_secret_access_key")
+        return {"config": config.update(updates)}
 
     @router.post("/api/proxy/test")
     async def test_proxy_endpoint(body: ProxyTestRequest, authorization: str | None = Header(default=None)):
@@ -85,7 +94,40 @@ def create_router(app_version: str) -> APIRouter:
         return {
             "backend": storage.get_backend_info(),
             "health": storage.health_check(),
+            "app_data": app_data_store.health_check(),
+            "object_storage": object_storage_service.health_check(),
         }
+
+    @router.post("/api/storage/migrate-to-database")
+    async def migrate_storage_to_database(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            app_data_result = await run_in_threadpool(app_data_store.migrate_local_files_to_database)
+            json_storage = JSONStorageBackend(DATA_DIR / "accounts.json", DATA_DIR / "auth_keys.json")
+            target_storage = config.get_storage_backend()
+            accounts = await run_in_threadpool(json_storage.load_accounts)
+            auth_keys = await run_in_threadpool(json_storage.load_auth_keys)
+            if accounts:
+                await run_in_threadpool(target_storage.save_accounts, accounts)
+            if auth_keys:
+                await run_in_threadpool(target_storage.save_auth_keys, auth_keys)
+            return {
+                "result": {
+                    **app_data_result,
+                    "accounts": len(accounts),
+                    "auth_keys": len(auth_keys),
+                }
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
+    @router.post("/api/object-storage/test")
+    async def test_object_storage(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            return {"result": await run_in_threadpool(object_storage_service.test_upload)}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
 
     @router.get("/api/logs")
     async def list_activity_logs(

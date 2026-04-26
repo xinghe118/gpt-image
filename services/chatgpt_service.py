@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from services.account_service import AccountService
 from services.config import config
+from services.object_storage_service import object_storage_service
 from services.openai_backend_api import CODEX_IMAGE_MODEL, OpenAIBackendAPI
 from utils.helper import (
     IMAGE_MODELS,
@@ -45,6 +46,8 @@ def _save_image_bytes(image_data: bytes, base_url: str | None = None) -> str:
     file_hash = hashlib.md5(image_data).hexdigest()
     timestamp = int(time.time())
     filename = f"{timestamp}_{file_hash}.png"
+    if object_storage_service.enabled():
+        return object_storage_service.upload_image(image_data, file_name=filename, content_type="image/png")
     relative_dir = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
     file_path = config.images_dir / relative_dir / filename
     file_path.parent.mkdir(parents=True, exist_ok=True)

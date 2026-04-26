@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from services.config import DATA_DIR
+from services.app_data_store import app_data_store
 
 
 def _now_iso() -> str:
@@ -15,28 +13,21 @@ def _now_iso() -> str:
 
 
 class ImageLibraryService:
-    def __init__(self, path: Path | None = None):
-        self.path = path or DATA_DIR / "library.json"
+    def __init__(self):
         self._lock = Lock()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _clean(value: object) -> str:
         return str(value or "").strip()
 
     def _load(self) -> list[dict[str, Any]]:
-        if not self.path.exists():
-            return []
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
+        data = app_data_store.load_document("library", {"items": []})
         if isinstance(data, dict):
             data = data.get("items")
         return data if isinstance(data, list) else []
 
     def _save(self, items: list[dict[str, Any]]) -> None:
-        self.path.write_text(json.dumps({"items": items}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        app_data_store.save_document("library", {"items": items})
 
     def record_images(
         self,

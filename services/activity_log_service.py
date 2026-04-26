@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-import json
 import time
 import uuid
-from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from services.config import DATA_DIR
+from services.app_data_store import app_data_store
 
 
 class ActivityLogService:
-    def __init__(self, log_file: Path | None = None) -> None:
-        self.log_file = log_file or DATA_DIR / "activity_logs.jsonl"
+    def __init__(self) -> None:
         self._lock = Lock()
-        self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _clean_text(value: object, limit: int = 240) -> str:
@@ -53,10 +49,8 @@ class ActivityLogService:
             "error": self._clean_text(error),
             "metadata": metadata or {},
         }
-        line = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
         with self._lock:
-            with self.log_file.open("a", encoding="utf-8") as handle:
-                handle.write(line + "\n")
+            app_data_store.append_activity_log(item)
         return item
 
     def list_logs(
@@ -69,22 +63,14 @@ class ActivityLogService:
         query: str = "",
     ) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit or 200), 1000))
-        if not self.log_file.exists():
-            return []
         level = level.strip().lower()
         status = status.strip().lower()
         event = event.strip().lower()
         query = query.strip().lower()
         items: list[dict[str, Any]] = []
         with self._lock:
-            lines = self.log_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-        for line in reversed(lines):
-            try:
-                item = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(item, dict):
-                continue
+            raw_items = app_data_store.list_activity_logs(limit=1000)
+        for item in raw_items:
             if level and str(item.get("level") or "").lower() != level:
                 continue
             if status and str(item.get("status") or "").lower() != status:
@@ -92,7 +78,7 @@ class ActivityLogService:
             if event and event not in str(item.get("event") or "").lower():
                 continue
             if query:
-                haystack = json.dumps(item, ensure_ascii=False).lower()
+                haystack = str(item).lower()
                 if query not in haystack:
                     continue
             items.append(item)

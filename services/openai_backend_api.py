@@ -14,6 +14,7 @@ from PIL import Image
 
 from services.account_service import account_service
 from services.config import config
+from services.object_storage_service import object_storage_service
 from services.proxy_service import proxy_settings
 from utils.helper import build_chat_image_markdown_content, ensure_ok, new_uuid, parse_sse_lines
 from utils.log import logger
@@ -634,6 +635,8 @@ class OpenAIBackendAPI:
 
     def _save_image_bytes(self, image_data: bytes) -> str:
         file_name = f"{int(time.time())}_{new_uuid().replace('-', '')}.png"
+        if object_storage_service.enabled():
+            return object_storage_service.upload_image(image_data, file_name=file_name, content_type="image/png")
         relative_dir = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
         file_path = config.images_dir / relative_dir / file_name
         file_path.parent.mkdir(parents=True, exist_ok=True)

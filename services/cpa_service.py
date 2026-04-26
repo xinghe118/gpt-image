@@ -13,6 +13,7 @@ from threading import Lock
 from curl_cffi.requests import Session
 
 from services.account_service import account_service
+from services.app_data_store import app_data_store
 from services.config import DATA_DIR
 from services.proxy_service import proxy_settings
 
@@ -73,10 +74,13 @@ class CPAConfig:
         self._pools: list[dict] = self._load()
 
     def _load(self) -> list[dict]:
-        if not self._store_file.exists():
-            return []
         try:
-            raw = json.loads(self._store_file.read_text(encoding="utf-8"))
+            if app_data_store.database_enabled:
+                raw = app_data_store.load_document("cpa_config", [])
+            elif self._store_file.exists():
+                raw = json.loads(self._store_file.read_text(encoding="utf-8"))
+            else:
+                raw = []
             if isinstance(raw, dict) and "base_url" in raw:
                 pool = _normalize_pool(raw)
                 return [pool] if pool["base_url"] else []
@@ -87,6 +91,9 @@ class CPAConfig:
         return []
 
     def _save(self) -> None:
+        if app_data_store.database_enabled:
+            app_data_store.save_document("cpa_config", self._pools)
+            return
         self._store_file.parent.mkdir(parents=True, exist_ok=True)
         self._store_file.write_text(json.dumps(self._pools, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 

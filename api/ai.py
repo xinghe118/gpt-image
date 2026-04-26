@@ -12,6 +12,7 @@ from services.account_service import account_service
 from services.activity_log_service import activity_log_service
 from services.auth_service import auth_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
+from services.image_library_service import image_library_service
 from utils.helper import is_image_chat_request, sse_json_stream
 
 
@@ -127,6 +128,14 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             result_count = len(result.get("data") or [])
             if result_count > 0:
                 auth_service.consume_quota(identity, result_count)
+                image_library_service.record_images(
+                    identity=identity,
+                    prompt=body.prompt,
+                    model=body.model,
+                    mode="generate",
+                    size=body.size,
+                    images=result.get("data") or [],
+                )
             activity_log_service.record(
                 "images.generations",
                 route="/v1/images/generations",
@@ -224,6 +233,14 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             result_count = len(result.get("data") or [])
             if result_count > 0:
                 auth_service.consume_quota(identity, result_count)
+                image_library_service.record_images(
+                    identity=identity,
+                    prompt=prompt,
+                    model=model,
+                    mode="edit",
+                    size=size,
+                    images=result.get("data") or [],
+                )
             activity_log_service.record(
                 "images.edits",
                 route="/v1/images/edits",

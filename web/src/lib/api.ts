@@ -63,6 +63,9 @@ export type LoginResponse = {
   role: AuthRole;
   subject_id: string;
   name: string;
+  quota_limit?: number | null;
+  quota_used?: number | null;
+  quota_remaining?: number | null;
 };
 
 export type UserKey = {
@@ -73,8 +76,32 @@ export type UserKey = {
   created_at: string | null;
   last_used_at: string | null;
   quota_limit: number | null;
+  quota_used: number | null;
+  quota_remaining: number | null;
+};
+
+export type CurrentIdentity = {
+  role: AuthRole;
+  subject_id: string;
+  name: string;
+  quota_limit: number | null;
   quota_used: number;
   quota_remaining: number | null;
+};
+
+export type LibraryImageItem = {
+  id: string;
+  subject_id: string;
+  subject_name: string;
+  role: string;
+  prompt: string;
+  model: string;
+  mode: string;
+  size: string;
+  created_at: string;
+  index: number;
+  b64_json: string;
+  revised_prompt?: string;
 };
 
 export async function login(authKey: string) {
@@ -192,6 +219,10 @@ export async function createUserKey(name: string, quotaLimit?: number | null) {
     method: "POST",
     body: { name, quota_limit: quotaLimit ?? null },
   });
+}
+
+export async function fetchCurrentIdentity() {
+  return httpRequest<CurrentIdentity>("/auth/me");
 }
 
 export async function updateUserKey(
@@ -462,4 +493,8 @@ export async function fetchActivityLogs(params: {
 
 export async function fetchActivityLogSummary() {
   return httpRequest<{ summary: ActivityLogSummary }>("/api/logs/summary");
+}
+
+export async function fetchLibraryItems(limit = 300) {
+  return httpRequest<{ items: LibraryImageItem[] }>(`/api/library?limit=${limit}`);
 }

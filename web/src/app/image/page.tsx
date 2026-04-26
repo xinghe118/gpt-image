@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, History, ImageIcon, LoaderCircle, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Activity, Gauge, History, ImageIcon, LoaderCircle, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { editImage, fetchAccounts, generateImage, type Account } from "@/lib/api";
+import { editImage, fetchAccounts, fetchCurrentIdentity, generateImage, type Account, type CurrentIdentity } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import {
   clearImageConversations,
@@ -192,6 +192,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [availableQuota, setAvailableQuota] = useState("加载中...");
+  const [currentIdentity, setCurrentIdentity] = useState<CurrentIdentity | null>(null);
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -268,12 +269,20 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const loadQuota = useCallback(async () => {
     if (!isAdmin) {
-      setAvailableQuota("--");
+      try {
+        const identity = await fetchCurrentIdentity();
+        setCurrentIdentity(identity);
+        setAvailableQuota(identity.quota_remaining === null ? "不限" : String(identity.quota_remaining ?? "--"));
+      } catch {
+        setAvailableQuota("--");
+      }
       return;
     }
     try {
       const data = await fetchAccounts();
       setAvailableQuota(formatAvailableQuota(data.items));
+      const identity = await fetchCurrentIdentity();
+      setCurrentIdentity(identity);
     } catch {
       setAvailableQuota((prev) => (prev === "加载中..." ? "--" : prev));
     }
@@ -785,7 +794,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      <section className="grid h-[calc(100vh-5.75rem)] min-h-[680px] grid-cols-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[280px_minmax(0,1fr)]">
+      <section className="grid h-[calc(100vh-5.75rem)] min-h-[680px] grid-cols-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_320px]">
         <div className="hidden h-full min-h-0 border-r border-slate-200 bg-slate-50/80 p-3 lg:block">
           <ImageSidebar
             conversations={conversations}
@@ -915,6 +924,106 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             />
           </div>
         </div>
+
+        <aside className="hidden min-h-0 border-l border-slate-200 bg-slate-50/80 p-4 xl:flex xl:flex-col xl:gap-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-600">Quota</div>
+                <div className="mt-1 text-lg font-semibold text-slate-950">额度状态</div>
+              </div>
+              <div className="grid size-10 place-items-center rounded-xl bg-cyan-50 text-cyan-700">
+                <Gauge className="size-5" />
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="rounded-xl bg-slate-50 p-3">
+                <div className="text-slate-400">总额</div>
+                <div className="mt-1 font-semibold text-slate-900">{currentIdentity?.quota_limit ?? (isAdmin ? "管理" : "不限")}</div>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-3">
+                <div className="text-slate-400">已用</div>
+                <div className="mt-1 font-semibold text-slate-900">{currentIdentity?.quota_used ?? 0}</div>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-3">
+                <div className="text-slate-400">剩余</div>
+                <div className="mt-1 font-semibold text-slate-900">{availableQuota}</div>
+              </div>
+            </div>
+            {currentIdentity?.quota_limit ? (
+              <div className="mt-4 h-2 rounded-full bg-slate-100">
+                <div
+                  className="h-2 rounded-full bg-cyan-500"
+                  style={{
+                    width: `${Math.min(100, Math.round(((currentIdentity.quota_used || 0) / Math.max(1, currentIdentity.quota_limit)) * 100))}%`,
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-slate-950">创作参数</div>
+            <div className="mt-4 space-y-4">
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-500">模式</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    className={`h-9 rounded-lg text-sm font-medium ${imageMode === "generate" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600"}`}
+                    onClick={() => setImageMode("generate")}
+                  >
+                    文生图
+                  </button>
+                  <button
+                    className={`h-9 rounded-lg text-sm font-medium ${imageMode === "edit" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600"}`}
+                    onClick={() => setImageMode("edit")}
+                  >
+                    图生图
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-500">生成张数</div>
+                <input
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-cyan-300"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={imageCount}
+                  onChange={(event) => setImageCount(event.target.value)}
+                />
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-500">图片比例</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {["1:1", "16:9", "9:16", "4:3", "3:4", ""].map((size) => (
+                    <button
+                      key={size || "auto"}
+                      className={`h-9 rounded-lg text-xs font-medium ${imageSize === size ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-600"}`}
+                      onClick={() => setImageSize(size)}
+                    >
+                      {size || "自动"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-500">风格预设</div>
+                <div className="flex flex-wrap gap-2">
+                  {["电影感", "产品海报", "写实摄影", "极简设计", "二次元", "电商主图"].map((preset) => (
+                    <button
+                      key={preset}
+                      className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-200"
+                      onClick={() => setImagePrompt((value) => (value ? `${value}，${preset}` : preset))}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
       </section>
 
       <ImageLightbox

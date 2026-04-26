@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from api.support import require_admin, require_identity
 from services.activity_log_service import activity_log_service
 from services.config import config
+from services.image_library_service import image_library_service
 from services.proxy_service import test_proxy
 
 
@@ -30,6 +31,21 @@ def create_router(app_version: str) -> APIRouter:
             "role": identity.get("role"),
             "subject_id": identity.get("id"),
             "name": identity.get("name"),
+            "quota_limit": identity.get("quota_limit"),
+            "quota_used": identity.get("quota_used"),
+            "quota_remaining": identity.get("quota_remaining"),
+        }
+
+    @router.get("/auth/me")
+    async def get_current_identity(authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        return {
+            "role": identity.get("role"),
+            "subject_id": identity.get("id"),
+            "name": identity.get("name"),
+            "quota_limit": identity.get("quota_limit"),
+            "quota_used": identity.get("quota_used"),
+            "quota_remaining": identity.get("quota_remaining"),
         }
 
     @router.get("/version")
@@ -87,6 +103,14 @@ def create_router(app_version: str) -> APIRouter:
     async def get_activity_log_summary(authorization: str | None = Header(default=None)):
         require_admin(authorization)
         return {"summary": activity_log_service.summary()}
+
+    @router.get("/api/library")
+    async def list_library_items(
+            authorization: str | None = Header(default=None),
+            limit: int = Query(default=300, ge=1, le=1000),
+    ):
+        identity = require_identity(authorization)
+        return {"items": image_library_service.list_images(identity=identity, limit=limit)}
 
     return router
 

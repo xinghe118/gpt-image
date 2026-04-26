@@ -37,6 +37,48 @@ const LEGACY_STORAGE_PREFIX = "chatgpt" + "2api";
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_last_size`;
 const activeConversationQueueIds = new Set<string>();
+const STYLE_PRESETS = [
+  {
+    title: "电影级叙事",
+    tag: "Cinematic",
+    prompt: "电影级构图，主体明确，真实镜头语言，柔和但有方向性的光线，浅景深，细腻胶片颗粒，高级色彩分级，画面具有故事感",
+  },
+  {
+    title: "商业产品海报",
+    tag: "Product",
+    prompt: "高端商业产品摄影，干净背景，精准布光，产品边缘清晰，材质质感突出，适合广告海报，留有排版空间，画面高级克制",
+  },
+  {
+    title: "写实摄影",
+    tag: "Photo",
+    prompt: "真实摄影风格，自然光影，真实材质和细节，镜头焦段合理，色彩不过度饱和，画面可信且有生活质感",
+  },
+  {
+    title: "电商主图",
+    tag: "Commerce",
+    prompt: "电商主图构图，主体居中突出，背景简洁明亮，卖点清晰，高清质感，适合商品展示，避免杂乱元素",
+  },
+  {
+    title: "东方新中式",
+    tag: "Oriental",
+    prompt: "东方新中式美学，留白克制，温润材质，低饱和自然色，优雅构图，融合现代设计与传统意境",
+  },
+  {
+    title: "潮流插画",
+    tag: "Illustration",
+    prompt: "潮流插画风格，形体概括有力，色块干净，细节精致，具有品牌视觉感，适合封面或社交媒体传播",
+  },
+  {
+    title: "UI 图标",
+    tag: "Icon",
+    prompt: "精致 UI 图标设计，简洁几何造型，统一透视，柔和阴影，清晰轮廓，适合应用图标或功能入口",
+  },
+  {
+    title: "建筑空间",
+    tag: "Space",
+    prompt: "高级建筑空间摄影，空间层次清晰，自然采光，材质细节丰富，构图稳定，呈现安静、现代、可居住的氛围",
+  },
+];
 
 function buildConversationTitle(prompt: string) {
   const trimmed = prompt.trim();
@@ -112,6 +154,11 @@ function pickFallbackConversationId(conversations: ImageConversation[]) {
 
 function sortImageConversations(conversations: ImageConversation[]) {
   return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function appendPromptSegment(current: string, segment: string) {
+  const trimmed = current.trim();
+  return trimmed ? `${trimmed}，${segment}` : segment;
 }
 
 async function recoverConversationHistory(items: ImageConversation[]) {
@@ -906,17 +953,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             <ImageComposer
               mode={imageMode}
               prompt={imagePrompt}
-              imageCount={imageCount}
-              imageSize={imageSize}
               availableQuota={availableQuota}
               activeTaskCount={activeTaskCount}
               referenceImages={referenceImages}
               textareaRef={textareaRef}
               fileInputRef={fileInputRef}
-              onModeChange={setImageMode}
               onPromptChange={setImagePrompt}
-              onImageCountChange={setImageCount}
-              onImageSizeChange={setImageSize}
               onSubmit={handleSubmit}
               onPickReferenceImage={() => fileInputRef.current?.click()}
               onReferenceImageChange={handleReferenceImageChange}
@@ -962,7 +1004,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             ) : null}
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="min-h-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-slate-950">创作参数</div>
             <div className="mt-4 space-y-4">
               <div>
@@ -1009,14 +1051,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div>
                 <div className="mb-2 text-xs font-medium text-slate-500">风格预设</div>
-                <div className="flex flex-wrap gap-2">
-                  {["电影感", "产品海报", "写实摄影", "极简设计", "二次元", "电商主图"].map((preset) => (
+                <div className="grid gap-2">
+                  {STYLE_PRESETS.map((preset) => (
                     <button
-                      key={preset}
-                      className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-200"
-                      onClick={() => setImagePrompt((value) => (value ? `${value}，${preset}` : preset))}
+                      key={preset.title}
+                      className="rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-cyan-200 hover:bg-cyan-50/60"
+                      onClick={() => setImagePrompt((value) => appendPromptSegment(value, preset.prompt))}
                     >
-                      {preset}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-slate-900">{preset.title}</span>
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{preset.tag}</span>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{preset.prompt}</p>
                     </button>
                   ))}
                 </div>

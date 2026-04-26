@@ -48,6 +48,14 @@ def create_router(app_version: str) -> APIRouter:
             "quota_remaining": identity.get("quota_remaining"),
         }
 
+    @router.get("/api/ui-config")
+    async def get_ui_config(authorization: str | None = Header(default=None)):
+        require_identity(authorization)
+        return {
+            "show_image_model_selector": config.show_image_model_selector,
+            "default_image_model": config.default_image_model,
+        }
+
     @router.get("/version")
     async def get_version():
         return {"version": app_version}

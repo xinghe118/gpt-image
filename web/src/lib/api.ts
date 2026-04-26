@@ -54,7 +54,13 @@ export type SettingsConfig = {
   proxy: string;
   base_url?: string;
   refresh_account_interval_minute?: number | string;
+  show_image_model_selector?: boolean;
   [key: string]: unknown;
+};
+
+export type UIConfig = {
+  show_image_model_selector: boolean;
+  default_image_model: ImageModel;
 };
 
 export type LoginResponse = {
@@ -208,6 +214,10 @@ export async function updateSettingsConfig(settings: SettingsConfig) {
     method: "POST",
     body: settings,
   });
+}
+
+export async function fetchUIConfig() {
+  return httpRequest<UIConfig>("/api/ui-config");
 }
 
 export async function fetchUserKeys() {

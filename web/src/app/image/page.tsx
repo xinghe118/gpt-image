@@ -19,6 +19,7 @@ import {
   editImage,
   fetchAccounts,
   fetchCurrentIdentity,
+  fetchUIConfig,
   generateImage,
   type Account,
   type CurrentIdentity,
@@ -323,6 +324,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imageCount, setImageCount] = useState("1");
   const [imageMode, setImageMode] = useState<ImageConversationMode>("generate");
   const [imageModel, setImageModel] = useState<ImageModel>("gpt-image-2");
+  const [showImageModelSelector, setShowImageModelSelector] = useState(true);
   const [imageSize, setImageSize] = useState("");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
@@ -365,6 +367,30 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       window.localStorage.setItem(IMAGE_MODEL_STORAGE_KEY, imageModel);
     }
   }, [imageModel]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadUIConfig = async () => {
+      try {
+        const data = await fetchUIConfig();
+        if (cancelled) {
+          return;
+        }
+        setShowImageModelSelector(data.show_image_model_selector);
+        setImageModel(data.show_image_model_selector ? data.default_image_model : "gpt-image-2");
+      } catch {
+        if (!cancelled) {
+          setShowImageModelSelector(true);
+        }
+      }
+    };
+
+    void loadUIConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -488,7 +514,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         if (storedSize && typeof window !== "undefined") {
           window.localStorage.setItem(IMAGE_SIZE_STORAGE_KEY, storedSize);
         }
-        if (storedModel && isImageModel(storedModel)) {
+        if (showImageModelSelector && storedModel && isImageModel(storedModel)) {
           setImageModel(storedModel);
         }
         setImageSize(storedSize || "");
@@ -1012,7 +1038,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const draftTurn: ImageTurn = {
       id: turnId,
       prompt,
-      model: imageModel,
+      model: showImageModelSelector ? imageModel : "gpt-image-2",
       mode: imageMode,
       referenceImages: imageMode === "edit" ? referenceImages : [],
       count: parsedCount,
@@ -1240,28 +1266,30 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   </button>
                 </div>
               </div>
-              <div>
-                <div className="mb-2 text-xs font-medium text-slate-500">模型</div>
-                <select
-                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-                  value={imageModel}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    if (isImageModel(value)) {
-                      setImageModel(value);
-                    }
-                  }}
-                >
-                  {IMAGE_MODELS.map((model) => (
-                    <option key={model.value} value={model.value}>
-                      {model.title}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-2 text-xs leading-5 text-slate-500">
-                  {IMAGE_MODELS.find((model) => model.value === imageModel)?.description}
-                </p>
-              </div>
+              {showImageModelSelector ? (
+                <div>
+                  <div className="mb-2 text-xs font-medium text-slate-500">模型</div>
+                  <select
+                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                    value={imageModel}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (isImageModel(value)) {
+                        setImageModel(value);
+                      }
+                    }}
+                  >
+                    {IMAGE_MODELS.map((model) => (
+                      <option key={model.value} value={model.value}>
+                        {model.title}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    {IMAGE_MODELS.find((model) => model.value === imageModel)?.description}
+                  </p>
+                </div>
+              ) : null}
               <div>
                 <div className="mb-2 text-xs font-medium text-slate-500">生成张数</div>
                 <input

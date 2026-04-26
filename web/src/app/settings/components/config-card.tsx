@@ -1,6 +1,6 @@
 "use client";
 
-import { Globe2, LoaderCircle, PlugZap, Radar, RefreshCw, Save } from "lucide-react";
+import { Eye, Globe2, LoaderCircle, PlugZap, Radar, RefreshCw, Save } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -20,6 +20,7 @@ export function ConfigCard() {
   const setRefreshAccountIntervalMinute = useSettingsStore((state) => state.setRefreshAccountIntervalMinute);
   const setProxy = useSettingsStore((state) => state.setProxy);
   const setBaseUrl = useSettingsStore((state) => state.setBaseUrl);
+  const setShowImageModelSelector = useSettingsStore((state) => state.setShowImageModelSelector);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
 
   const handleTestProxy = async () => {
@@ -140,6 +141,31 @@ export function ConfigCard() {
               className="h-10 rounded-lg border-slate-200 bg-white"
             />
             <p className="text-xs text-slate-500">用于生成图片结果的访问前缀地址。</p>
+          </div>
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 md:col-span-3">
+            <div className="min-w-0">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <Eye className="size-4 text-slate-400" />
+                用户端模型选择
+              </label>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                关闭后普通用户不显示模型下拉框，所有图片任务默认使用 GPT Image 2。
+              </p>
+            </div>
+            <button
+              type="button"
+              className={`relative h-7 w-12 shrink-0 rounded-full transition ${
+                config?.show_image_model_selector !== false ? "bg-cyan-600" : "bg-slate-300"
+              }`}
+              aria-pressed={config?.show_image_model_selector !== false}
+              onClick={() => setShowImageModelSelector(config?.show_image_model_selector === false)}
+            >
+              <span
+                className={`absolute top-1 size-5 rounded-full bg-white shadow-sm transition ${
+                  config?.show_image_model_selector !== false ? "left-6" : "left-1"
+                }`}
+              />
+            </button>
           </div>
         </div>
 

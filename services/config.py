@@ -127,6 +127,17 @@ class ConfigStore:
         ).strip().rstrip("/")
 
     @property
+    def show_image_model_selector(self) -> bool:
+        value = self.data.get("show_image_model_selector", True)
+        if isinstance(value, str):
+            return value.strip().lower() not in {"0", "false", "off", "no", "否", "关闭"}
+        return bool(value)
+
+    @property
+    def default_image_model(self) -> str:
+        return "gpt-image-2"
+
+    @property
     def app_version(self) -> str:
         try:
             value = VERSION_FILE.read_text(encoding="utf-8").strip()

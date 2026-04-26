@@ -15,7 +15,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { editImage, fetchAccounts, fetchCurrentIdentity, generateImage, type Account, type CurrentIdentity } from "@/lib/api";
+import {
+  editImage,
+  fetchAccounts,
+  fetchCurrentIdentity,
+  generateImage,
+  type Account,
+  type CurrentIdentity,
+  type ImageModel,
+} from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import {
   clearImageConversations,
@@ -33,11 +41,39 @@ import {
 
 const ACTIVE_CONVERSATION_STORAGE_KEY = "gpt-image:image_active_conversation_id";
 const IMAGE_SIZE_STORAGE_KEY = "gpt-image:image_last_size";
+const IMAGE_MODEL_STORAGE_KEY = "gpt-image:image_last_model";
 const STYLE_PRESETS_STORAGE_KEY = "gpt-image:image_style_presets";
 const LEGACY_STORAGE_PREFIX = "chatgpt" + "2api";
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_last_size`;
 const activeConversationQueueIds = new Set<string>();
+
+const IMAGE_MODELS = [
+  {
+    value: "auto",
+    title: "自动选择",
+    description: "由后端按可用账号与默认模型处理",
+  },
+  {
+    value: "gpt-image-2",
+    title: "GPT Image 2",
+    description: "默认图像生成模型，适合大多数创作",
+  },
+  {
+    value: "gpt-image-1",
+    title: "GPT Image 1",
+    description: "兼容旧接口和旧账号能力",
+  },
+  {
+    value: "codex-gpt-image-2",
+    title: "Codex GPT Image 2",
+    description: "保留给 Codex 图像通道",
+  },
+] as const;
+
+function isImageModel(value: string): value is ImageModel {
+  return IMAGE_MODELS.some((model) => model.value === value);
+}
 
 type StylePreset = {
   id: string;
@@ -286,6 +322,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageCount, setImageCount] = useState("1");
   const [imageMode, setImageMode] = useState<ImageConversationMode>("generate");
+  const [imageModel, setImageModel] = useState<ImageModel>("gpt-image-2");
   const [imageSize, setImageSize] = useState("");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
@@ -322,6 +359,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(IMAGE_MODEL_STORAGE_KEY, imageModel);
+    }
+  }, [imageModel]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(IMAGE_SIZE_STORAGE_KEY, imageSize);
+    }
+  }, [imageSize]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -434,8 +483,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             ? window.localStorage.getItem(IMAGE_SIZE_STORAGE_KEY) ||
               window.localStorage.getItem(LEGACY_IMAGE_SIZE_STORAGE_KEY)
             : null;
+        const storedModel =
+          typeof window !== "undefined" ? window.localStorage.getItem(IMAGE_MODEL_STORAGE_KEY) : null;
         if (storedSize && typeof window !== "undefined") {
           window.localStorage.setItem(IMAGE_SIZE_STORAGE_KEY, storedSize);
+        }
+        if (storedModel && isImageModel(storedModel)) {
+          setImageModel(storedModel);
         }
         setImageSize(storedSize || "");
 
@@ -958,7 +1012,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const draftTurn: ImageTurn = {
       id: turnId,
       prompt,
-      model: "auto",
+      model: imageModel,
       mode: imageMode,
       referenceImages: imageMode === "edit" ? referenceImages : [],
       count: parsedCount,
@@ -1184,6 +1238,32 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   >
                     图生图
                   </button>
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-500">模型</div>
+                <div className="grid gap-2">
+                  {IMAGE_MODELS.map((model) => (
+                    <button
+                      key={model.value}
+                      className={`rounded-xl border p-3 text-left transition ${
+                        imageModel === model.value
+                          ? "border-cyan-300 bg-cyan-50 text-cyan-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50/60"
+                      }`}
+                      onClick={() => setImageModel(model.value)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold">{model.title}</span>
+                        {imageModel === model.value ? (
+                          <span className="rounded-md bg-cyan-100 px-2 py-0.5 text-[10px] font-semibold text-cyan-700">
+                            当前
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">{model.description}</p>
+                    </button>
+                  ))}
                 </div>
               </div>
               <div>

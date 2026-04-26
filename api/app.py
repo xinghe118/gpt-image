@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from threading import Event
+import traceback
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -40,6 +43,20 @@ def create_app() -> FastAPI:
     app.include_router(ai.create_router(chatgpt_service))
     app.include_router(accounts.create_router())
     app.include_router(system.create_router(app_version))
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(request: Request, exc: Exception):
+        error_log = config.images_dir.parent / "server_errors.log"
+        error_log.parent.mkdir(parents=True, exist_ok=True)
+        with error_log.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n[{datetime.now(timezone.utc).isoformat()}] {request.method} {request.url.path}\n")
+            handle.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+            handle.write("\n")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": {"error": f"服务器内部错误：{exc}"}},
+        )
+
     if config.images_dir.exists():
         app.mount("/images", StaticFiles(directory=str(config.images_dir)), name="images")
 

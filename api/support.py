@@ -60,7 +60,9 @@ def raise_image_quota_error(exc: Exception) -> None:
 def sanitize_cpa_pool(pool: dict | None) -> dict | None:
     if not isinstance(pool, dict):
         return None
-    return {key: value for key, value in pool.items() if key != "secret_key"}
+    sanitized = {key: value for key, value in pool.items() if key != "secret_key"}
+    sanitized["has_secret_key"] = bool(str(pool.get("secret_key") or "").strip())
+    return sanitized
 
 
 def sanitize_cpa_pools(pools: list[dict]) -> list[dict]:

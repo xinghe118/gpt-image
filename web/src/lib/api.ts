@@ -265,6 +265,7 @@ export type CPAPool = {
   id: string;
   name: string;
   base_url: string;
+  has_secret_key?: boolean;
   import_job?: CPAImportJob | null;
 };
 

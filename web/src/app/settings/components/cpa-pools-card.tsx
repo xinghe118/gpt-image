@@ -66,7 +66,12 @@ export function CPAPoolsCard() {
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-stone-800">{pool.name || pool.base_url}</div>
-                      <div className="truncate text-xs text-stone-400">{pool.base_url}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-xs text-stone-400">{pool.base_url}</span>
+                        <Badge variant={pool.has_secret_key ? "success" : "danger"} className="rounded-md px-1.5 py-0 text-[10px]">
+                          {pool.has_secret_key ? "密钥已保存" : "缺少密钥"}
+                        </Badge>
+                      </div>
                     </div>
                     <div className="flex items-center gap-1">
                       <button

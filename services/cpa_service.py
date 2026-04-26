@@ -136,6 +136,8 @@ class CPAConfig:
             for index, pool in enumerate(self._pools):
                 if pool["id"] != pool_id:
                     continue
+                if "secret_key" in updates and not str(updates.get("secret_key") or "").strip():
+                    updates = {key: value for key, value in updates.items() if key != "secret_key"}
                 merged = {**pool, **{key: value for key, value in updates.items() if value is not None}, "id": pool_id}
                 self._pools[index] = _normalize_pool(merged)
                 self._save()
@@ -175,8 +177,10 @@ class CPAConfig:
 def list_remote_files(pool: dict) -> list[dict]:
     base_url = str(pool.get("base_url") or "").strip()
     secret_key = str(pool.get("secret_key") or "").strip()
-    if not base_url or not secret_key:
-        return []
+    if not base_url:
+        raise RuntimeError("CPA 地址未配置")
+    if not secret_key:
+        raise RuntimeError("CPA 管理密钥未配置，请编辑连接并重新保存 Management Secret Key")
 
     url = f"{_management_base_url(base_url)}/v0/management/auth-files"
     session = Session(**proxy_settings.build_session_kwargs(verify=True))

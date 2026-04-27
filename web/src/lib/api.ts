@@ -60,6 +60,7 @@ export type SettingsConfig = {
   base_url?: string;
   refresh_account_interval_minute?: number | string;
   show_image_model_selector?: boolean;
+  upstream_image_channels_enabled?: boolean;
   object_storage_enabled?: boolean;
   object_storage_endpoint?: string;
   object_storage_bucket?: string;

@@ -146,6 +146,10 @@ class ConfigStore:
     def default_image_model(self) -> str:
         return "gpt-image-2"
 
+    @property
+    def upstream_image_channels_enabled(self) -> bool:
+        return _as_bool(self.data.get("upstream_image_channels_enabled"), True)
+
     def object_storage_config(self) -> dict[str, Any]:
         return {
             "enabled": _as_bool(self.data.get("object_storage_enabled"), False),
@@ -177,6 +181,7 @@ class ConfigStore:
         data.pop("auth-key", None)
         object_storage = self.public_object_storage_config()
         data.setdefault("show_image_model_selector", self.show_image_model_selector)
+        data.setdefault("upstream_image_channels_enabled", self.upstream_image_channels_enabled)
         data.setdefault("object_storage_enabled", object_storage["enabled"])
         data.setdefault("object_storage_endpoint", object_storage["endpoint"])
         data.setdefault("object_storage_bucket", object_storage["bucket"])

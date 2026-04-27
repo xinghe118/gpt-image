@@ -64,6 +64,8 @@ class AccountService:
         if status in {"禁用", "限流", "异常"}:
             return False
         if str(account.get("provider") or "chatgpt") == "openai_compatible":
+            if not config.upstream_image_channels_enabled:
+                return False
             capabilities = account.get("capabilities")
             if isinstance(capabilities, list) and capability not in capabilities:
                 return False

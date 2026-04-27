@@ -86,13 +86,18 @@ class AuthServiceTests(unittest.TestCase):
             self.assertEqual(item["role"], "user")
             self.assertEqual(item["name"], "Alice")
             self.assertTrue(item["enabled"])
-            self.assertTrue(raw_key.startswith("cg2a_user_"))
+            self.assertTrue(raw_key.startswith("sk-"))
+            self.assertNotIn("key", item)
+
+            listed = service.list_keys(role="user", include_raw_key=True)
+            self.assertEqual(listed[0]["key"], raw_key)
 
             authed = service.authenticate(raw_key)
             self.assertIsNotNone(authed)
             self.assertEqual(authed["id"], item["id"])
             self.assertEqual(authed["role"], "user")
             self.assertIsNotNone(authed["last_used_at"])
+            self.assertNotIn("key", authed)
 
             updated = service.update_key(item["id"], {"enabled": False}, role="user")
             self.assertIsNotNone(updated)

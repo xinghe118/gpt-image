@@ -66,11 +66,13 @@ class AuthService:
         last_used_at = self._clean(raw.get("last_used_at")) or None
         quota_limit = self._normalize_quota_limit(raw.get("quota_limit"))
         quota_used = min(self._normalize_quota_used(raw.get("quota_used")), quota_limit) if quota_limit is not None else self._normalize_quota_used(raw.get("quota_used"))
+        raw_key = self._clean(raw.get("raw_key"))
         return {
             "id": item_id,
             "name": name,
             "role": role,
             "key_hash": key_hash,
+            "raw_key": raw_key or None,
             "enabled": bool(raw.get("enabled", True)),
             "created_at": created_at,
             "last_used_at": last_used_at,
@@ -91,11 +93,11 @@ class AuthService:
         self.storage.save_auth_keys(self._items)
 
     @staticmethod
-    def _public_item(item: dict[str, object]) -> dict[str, object]:
+    def _public_item(item: dict[str, object], *, include_raw_key: bool = False) -> dict[str, object]:
         quota_limit = AuthService._normalize_quota_limit(item.get("quota_limit"))
         quota_used = AuthService._normalize_quota_used(item.get("quota_used"))
         quota_remaining = None if quota_limit is None else max(0, quota_limit - quota_used)
-        return {
+        public_item = {
             "id": item.get("id"),
             "name": item.get("name"),
             "role": item.get("role"),
@@ -106,11 +108,14 @@ class AuthService:
             "quota_used": quota_used,
             "quota_remaining": quota_remaining,
         }
+        if include_raw_key:
+            public_item["key"] = item.get("raw_key")
+        return public_item
 
-    def list_keys(self, role: AuthRole | None = None) -> list[dict[str, object]]:
+    def list_keys(self, role: AuthRole | None = None, *, include_raw_key: bool = False) -> list[dict[str, object]]:
         with self._lock:
             items = [item for item in self._items if role is None or item.get("role") == role]
-            return [self._public_item(item) for item in items]
+            return [self._public_item(item, include_raw_key=include_raw_key) for item in items]
 
     def create_key(self, *, role: AuthRole, name: str = "", quota_limit: int | None = None) -> tuple[dict[str, object], str]:
         normalized_name = self._clean(name) or ("管理员密钥" if role == "admin" else "普通用户")
@@ -121,6 +126,7 @@ class AuthService:
             "name": normalized_name,
             "role": role,
             "key_hash": _hash_key(raw_key),
+            "raw_key": raw_key,
             "enabled": True,
             "created_at": _now_iso(),
             "last_used_at": None,

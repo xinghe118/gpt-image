@@ -85,6 +85,7 @@ export type LoginResponse = {
 export type UserKey = {
   id: string;
   name: string;
+  key?: string | null;
   role: "user";
   enabled: boolean;
   created_at: string | null;

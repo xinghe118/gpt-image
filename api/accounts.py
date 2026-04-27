@@ -99,13 +99,13 @@ def create_router() -> APIRouter:
     @router.get("/api/auth/users")
     async def list_user_keys(authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        return {"items": auth_service.list_keys(role="user")}
+        return {"items": auth_service.list_keys(role="user", include_raw_key=True)}
 
     @router.post("/api/auth/users")
     async def create_user_key(body: UserKeyCreateRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)
         item, raw_key = auth_service.create_key(role="user", name=body.name, quota_limit=body.quota_limit)
-        return {"item": item, "key": raw_key, "items": auth_service.list_keys(role="user")}
+        return {"item": item, "key": raw_key, "items": auth_service.list_keys(role="user", include_raw_key=True)}
 
     @router.post("/api/auth/users/{key_id}")
     async def update_user_key(
@@ -121,14 +121,14 @@ def create_router() -> APIRouter:
         item = auth_service.update_key(key_id, updates, role="user")
         if item is None:
             raise HTTPException(status_code=404, detail={"error": "user key not found"})
-        return {"item": item, "items": auth_service.list_keys(role="user")}
+        return {"item": item, "items": auth_service.list_keys(role="user", include_raw_key=True)}
 
     @router.delete("/api/auth/users/{key_id}")
     async def delete_user_key(key_id: str, authorization: str | None = Header(default=None)):
         require_admin(authorization)
         if not auth_service.delete_key(key_id, role="user"):
             raise HTTPException(status_code=404, detail={"error": "user key not found"})
-        return {"items": auth_service.list_keys(role="user")}
+        return {"items": auth_service.list_keys(role="user", include_raw_key=True)}
 
     @router.get("/api/accounts")
     async def get_accounts(authorization: str | None = Header(default=None)):

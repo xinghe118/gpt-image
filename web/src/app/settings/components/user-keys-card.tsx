@@ -243,12 +243,13 @@ export function UserKeysCard() {
                         </Badge>
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-500 transition hover:bg-stone-200 hover:text-stone-700"
-                          onClick={() => void handleCopy(item.id)}
-                          title="复制密钥编号"
+                          className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-500 transition hover:bg-stone-200 hover:text-stone-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-stone-100 disabled:hover:text-stone-500"
+                          onClick={() => item.key ? void handleCopy(item.key) : toast.info("旧密钥没有保存明文，请重新创建后复制")}
+                          disabled={!item.key}
+                          title={item.key ? "复制用户密钥" : "旧密钥没有保存明文"}
                         >
                           <Copy className="size-3" />
-                          复制编号
+                          复制密钥
                         </button>
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500">

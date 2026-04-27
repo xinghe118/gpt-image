@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { fetchLibraryItems, type LibraryImageItem } from "@/lib/api";
+import { fetchLibraryItems, fetchProjects, type LibraryImageItem, type ProjectItem } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +44,8 @@ export default function LibraryPage() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState("");
   const [selectedItem, setSelectedItem] = useState<LibraryImageItem | null>(null);
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [projectId, setProjectId] = useState("");
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const pageSize = 48;
@@ -60,6 +62,7 @@ export default function LibraryPage() {
         offset: append ? items.length : 0,
         q: query.trim(),
         mode: modeOverride ?? mode,
+        project_id: projectId || undefined,
       });
       setItems((current) => (append ? [...current, ...data.items] : data.items));
       setHasMore(data.has_more);
@@ -76,6 +79,9 @@ export default function LibraryPage() {
       return;
     }
     didLoadRef.current = true;
+    void fetchProjects()
+      .then((data) => setProjects(data.items))
+      .catch(() => undefined);
     void loadItems();
   }, [isCheckingAuth, session]);
 
@@ -155,7 +161,7 @@ export default function LibraryPage() {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_auto_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <Input
@@ -170,6 +176,18 @@ export default function LibraryPage() {
               }}
             />
           </div>
+          <select
+            value={projectId}
+            onChange={(event) => setProjectId(event.target.value)}
+            className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-cyan-300"
+          >
+            <option value="">全部项目</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
           <div className="flex gap-2">
             {[
               ["", "全部"],
@@ -223,6 +241,7 @@ export default function LibraryPage() {
                   <span className="rounded-lg bg-slate-100 px-2 py-1">{item.mode === "edit" ? "图生图" : "文生图"}</span>
                   <span className="rounded-lg bg-slate-100 px-2 py-1">{item.model}</span>
                   {item.size ? <span className="rounded-lg bg-slate-100 px-2 py-1">{item.size}</span> : null}
+                  <span className="rounded-lg bg-cyan-50 px-2 py-1 text-cyan-700">{item.project_name || "默认项目"}</span>
                   <span className="rounded-lg bg-slate-100 px-2 py-1">{formatTime(item.created_at)}</span>
                   {session.role === "admin" ? <span className="rounded-lg bg-cyan-50 px-2 py-1 text-cyan-700">{item.subject_name}</span> : null}
                 </div>
@@ -267,6 +286,7 @@ export default function LibraryPage() {
                   <Info label="模型" value={selectedItem.model} />
                   <Info label="模式" value={selectedItem.mode === "edit" ? "图生图" : "文生图"} />
                   <Info label="比例" value={selectedItem.size || "未指定"} />
+                  <Info label="项目" value={selectedItem.project_name || "默认项目"} />
                   <Info label="用户" value={selectedItem.subject_name || selectedItem.subject_id} />
                 </div>
               </div>

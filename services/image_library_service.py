@@ -13,6 +13,7 @@ from PIL import Image
 
 from services.app_data_store import app_data_store
 from services.config import config
+from services.project_service import project_service
 
 
 def _now_iso() -> str:
@@ -113,10 +114,14 @@ class ImageLibraryService:
         mode: str,
         size: str | None,
         images: list[dict[str, object]],
+        project_id: str | None = None,
     ) -> list[dict[str, Any]]:
         subject_id = self._clean(identity.get("id")) or "anonymous"
         subject_name = self._clean(identity.get("name")) or subject_id
         role = self._clean(identity.get("role")) or "user"
+        project = project_service.touch_project(identity, project_id)
+        normalized_project_id = self._clean(project.get("id")) or project_service.DEFAULT_PROJECT_ID
+        project_name = self._clean(project.get("name")) or "默认项目"
         created_at = _now_iso()
         records: list[dict[str, Any]] = []
         for index, image in enumerate(images):
@@ -135,6 +140,8 @@ class ImageLibraryService:
                     "subject_id": subject_id,
                     "subject_name": subject_name,
                     "role": role,
+                    "project_id": normalized_project_id,
+                    "project_name": project_name,
                     "prompt": prompt,
                     "model": model,
                     "mode": mode,
@@ -161,6 +168,7 @@ class ImageLibraryService:
         offset: int = 0,
         query: str = "",
         mode: str = "",
+        project_id: str = "",
     ) -> dict[str, Any]:
         subject_id = self._clean(identity.get("id"))
         is_admin = identity.get("role") == "admin"
@@ -168,9 +176,16 @@ class ImageLibraryService:
         offset = max(0, int(offset or 0))
         normalized_query = self._clean(query).lower()
         normalized_mode = self._clean(mode).lower()
+        normalized_project_id = self._clean(project_id)
         with self._lock:
             items = self._load()
             visible_items = items if is_admin else [item for item in items if self._clean(item.get("subject_id")) == subject_id]
+            if normalized_project_id:
+                visible_items = [
+                    item
+                    for item in visible_items
+                    if self._clean(item.get("project_id") or project_service.DEFAULT_PROJECT_ID) == normalized_project_id
+                ]
             if normalized_mode:
                 visible_items = [item for item in visible_items if self._clean(item.get("mode")).lower() == normalized_mode]
             if normalized_query:
@@ -184,6 +199,7 @@ class ImageLibraryService:
                             self._clean(item.get("model")),
                             self._clean(item.get("size")),
                             self._clean(item.get("subject_name")),
+                            self._clean(item.get("project_name")),
                         ]
                     ).lower()
                 ]

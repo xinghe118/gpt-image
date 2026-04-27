@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Gauge, History, ImageIcon, LoaderCircle, Pencil, Plus, RotateCcw, Save, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
+import { Activity, FolderKanban, Gauge, History, ImageIcon, LoaderCircle, Pencil, Plus, RotateCcw, Save, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
@@ -18,18 +18,20 @@ import { Button } from "@/components/ui/button";
 import {
   createImageEditJob,
   createImageGenerationJob,
+  createProject,
   fetchAccounts,
   fetchCurrentIdentity,
   fetchImageJob,
+  fetchProjects,
   fetchUIConfig,
   type Account,
   type CurrentIdentity,
   type GeneratedImageData,
   type ImageModel,
+  type ProjectItem,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import {
-  clearImageConversations,
   deleteImageConversation,
   getImageConversationStats,
   listImageConversations,
@@ -48,6 +50,7 @@ const IMAGE_SIZE_STORAGE_KEY = "gpt-image:image_last_size";
 const IMAGE_MODEL_STORAGE_KEY = "gpt-image:image_last_model";
 const STYLE_PRESETS_STORAGE_KEY = "gpt-image:image_style_presets";
 const PENDING_REFERENCE_IMAGE_STORAGE_KEY = "gpt-image:pending_reference_image";
+const ACTIVE_PROJECT_STORAGE_KEY = "gpt-image:active_project_id";
 const LEGACY_STORAGE_PREFIX = "chatgpt" + "2api";
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_last_size`;
@@ -309,12 +312,13 @@ async function runImageJob(
   model: ImageModel,
   size: string,
   referenceStrength: ImageReferenceStrength,
+  projectId: string,
 ): Promise<GeneratedImageData> {
   const finalPrompt = mode === "edit" ? buildEditPrompt(prompt, referenceStrength) : prompt;
   const { job } =
     mode === "edit"
-      ? await createImageEditJob(referenceFiles, finalPrompt, model, size)
-      : await createImageGenerationJob(finalPrompt, model, size);
+      ? await createImageEditJob(referenceFiles, finalPrompt, model, size, projectId)
+      : await createImageGenerationJob(finalPrompt, model, size, projectId);
   const result = await waitForImageJob(job.job_id);
   const first = result?.data?.[0];
   if (!first?.b64_json && !first?.url) {
@@ -471,11 +475,23 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [presetTitle, setPresetTitle] = useState("");
   const [presetTag, setPresetTag] = useState("");
   const [presetPrompt, setPresetPrompt] = useState("");
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState("default");
+  const [newProjectName, setNewProjectName] = useState("");
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
 
   const parsedCount = useMemo(() => Math.max(1, Math.min(10, Number(imageCount) || 1)), [imageCount]);
+  const projectConversations = useMemo(
+    () => conversations.filter((item) => (item.projectId || "default") === activeProjectId),
+    [activeProjectId, conversations],
+  );
   const selectedConversation = useMemo(
     () => conversations.find((item) => item.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
+  );
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
+    [activeProjectId, projects],
   );
   const taskSummary = useMemo(
     () =>
@@ -733,6 +749,39 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   }, [isAdmin, loadQuota]);
 
   useEffect(() => {
+    let cancelled = false;
+    const loadProjects = async () => {
+      try {
+        const data = await fetchProjects();
+        if (cancelled) {
+          return;
+        }
+        setProjects(data.items);
+        const storedProjectId =
+          typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY) : "";
+        const nextProjectId =
+          storedProjectId && data.items.some((item) => item.id === storedProjectId)
+            ? storedProjectId
+            : data.items[0]?.id || "default";
+        setActiveProjectId(nextProjectId);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "读取项目失败");
+      }
+    };
+    void loadProjects();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, activeProjectId);
+  }, [activeProjectId]);
+
+  useEffect(() => {
     if (!selectedConversation) {
       return;
     }
@@ -776,6 +825,37 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       setSelectedConversationId(pickFallbackConversationId(conversations));
     }
   }, [conversations, selectedConversationId]);
+
+  useEffect(() => {
+    if (selectedConversationId && !projectConversations.some((conversation) => conversation.id === selectedConversationId)) {
+      setSelectedConversationId(pickFallbackConversationId(projectConversations));
+    }
+    if (!selectedConversationId && projectConversations.length > 0) {
+      setSelectedConversationId(pickFallbackConversationId(projectConversations));
+    }
+  }, [activeProjectId, projectConversations, selectedConversationId]);
+
+  const handleCreateProject = async () => {
+    const name = newProjectName.trim();
+    if (!name) {
+      toast.error("请输入项目名称");
+      return;
+    }
+    setIsCreatingProject(true);
+    try {
+      const data = await createProject({ name });
+      setProjects(data.items);
+      setActiveProjectId(data.item.id);
+      setSelectedConversationId(null);
+      setNewProjectName("");
+      resetComposer();
+      toast.success("项目已创建");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "创建项目失败");
+    } finally {
+      setIsCreatingProject(false);
+    }
+  };
 
   const persistConversation = async (conversation: ImageConversation) => {
     const nextConversations = sortImageConversations([
@@ -851,12 +931,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const handleClearHistory = async () => {
     try {
-      await clearImageConversations();
-      conversationsRef.current = [];
-      setConversations([]);
+      const nextConversations = conversationsRef.current.filter(
+        (conversation) => (conversation.projectId || "default") !== activeProjectId,
+      );
+      await saveImageConversations(nextConversations);
+      conversationsRef.current = nextConversations;
+      setConversations(nextConversations);
       setSelectedConversationId(null);
       resetComposer();
-      toast.success("已清空历史记录");
+      toast.success("已清空当前项目的历史记录");
     } catch (error) {
       const message = error instanceof Error ? error.message : "清空历史记录失败";
       toast.error(message);
@@ -1086,6 +1169,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               queuedTurn.model,
               queuedTurn.size,
               queuedTurn.referenceStrength || "medium",
+              snapshot.projectId || activeProjectId,
             );
 
             const nextImage: StoredImage = {
@@ -1210,7 +1294,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
       }
     },
-    [loadQuota, updateConversation],
+    [activeProjectId, loadQuota, updateConversation],
   );
   /* eslint-enable react-hooks/preserve-manual-memoization */
 
@@ -1311,13 +1395,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     };
 
     const baseConversation: ImageConversation = targetConversation
-      ? {
+        ? {
           ...targetConversation,
+          projectId: targetConversation.projectId || activeProjectId,
           updatedAt: now,
           turns: [...targetConversation.turns, draftTurn],
         }
       : {
           id: conversationId,
+          projectId: activeProjectId,
           title: buildConversationTitle(prompt),
           createdAt: now,
           updatedAt: now,
@@ -1344,8 +1430,82 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     <>
       <section className="grid h-[calc(100vh-5.75rem)] min-h-[680px] grid-cols-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_320px]">
         <div className="hidden h-full min-h-0 border-r border-slate-200 bg-slate-50/80 p-3 lg:block">
+          <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <label className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              <FolderKanban className="size-4" />
+              项目空间
+            </label>
+            <select
+              value={activeProjectId}
+              onChange={(event) => {
+                setActiveProjectId(event.target.value);
+                setSelectedConversationId(null);
+                resetComposer();
+              }}
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-cyan-300"
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <div className="mt-2 flex gap-2">
+              <input
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void handleCreateProject();
+                  }
+                }}
+                placeholder="新项目名称"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-cyan-300"
+              />
+              <Button
+                className="h-9 rounded-lg bg-slate-950 px-3 text-white hover:bg-slate-800"
+                onClick={() => void handleCreateProject()}
+                disabled={isCreatingProject}
+              >
+                {isCreatingProject ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              </Button>
+            </div>
+            <div className="mt-3 grid gap-2 lg:hidden">
+              <select
+                value={activeProjectId}
+                onChange={(event) => {
+                  setActiveProjectId(event.target.value);
+                  setSelectedConversationId(null);
+                  resetComposer();
+                }}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-cyan-300"
+              >
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <input
+                  value={newProjectName}
+                  onChange={(event) => setNewProjectName(event.target.value)}
+                  placeholder="新项目名称"
+                  className="h-10 min-w-0 flex-1 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-cyan-300"
+                />
+                <Button
+                  className="h-10 rounded-xl bg-slate-950 text-white hover:bg-slate-800"
+                  onClick={() => void handleCreateProject()}
+                  disabled={isCreatingProject}
+                >
+                  {isCreatingProject ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                  项目
+                </Button>
+              </div>
+            </div>
+          </div>
           <ImageSidebar
-            conversations={conversations}
+            conversations={projectConversations}
             isLoadingHistory={isLoadingHistory}
             selectedConversationId={selectedConversationId}
             onCreateDraft={handleCreateDraft}
@@ -1366,7 +1526,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             </DialogHeader>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
               <ImageSidebar
-                conversations={conversations}
+                conversations={projectConversations}
                 isLoadingHistory={isLoadingHistory}
                 selectedConversationId={selectedConversationId}
                 onCreateDraft={() => {
@@ -1519,7 +1679,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span className="inline-flex items-center gap-1">
                       <ImageIcon className="size-3.5" />
-                      {conversations.length} 个会话
+                      {projectConversations.length} 个会话
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <FolderKanban className="size-3.5" />
+                      {activeProject?.name || "默认项目"}
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <Activity className="size-3.5" />

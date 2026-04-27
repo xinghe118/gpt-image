@@ -28,6 +28,7 @@ class ImageGenerationRequest(BaseModel):
     response_format: str = "b64_json"
     history_disabled: bool = True
     stream: bool | None = None
+    project_id: str | None = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -153,6 +154,7 @@ def _run_generation_request(
         response_format: str,
         base_url: str,
         started_at: float,
+        project_id: str | None = None,
 ) -> dict[str, object]:
     try:
         result = chatgpt_service.generate_with_pool(prompt, model, n, size, "b64_json", base_url)
@@ -167,6 +169,7 @@ def _run_generation_request(
                 mode="generate",
                 size=size,
                 images=result.get("data") or [],
+                project_id=project_id,
             )
         activity_log_service.record(
             "images.generations",
@@ -176,7 +179,7 @@ def _run_generation_request(
             role=str(identity.get("role") or ""),
             prompt=prompt,
             duration_ms=int((time.perf_counter() - started_at) * 1000),
-            metadata={"stream": False, "n": n, "size": size, "result_count": result_count},
+            metadata={"stream": False, "n": n, "size": size, "result_count": result_count, "project_id": project_id},
         )
         return _format_image_api_result(result, records, response_format)
     except ImageGenerationError as exc:
@@ -208,6 +211,7 @@ def _run_edit_request(
         response_format: str,
         base_url: str,
         started_at: float,
+        project_id: str | None = None,
 ) -> dict[str, object]:
     try:
         result = chatgpt_service.edit_with_pool(prompt, images, model, n, size, "b64_json", base_url)
@@ -222,6 +226,7 @@ def _run_edit_request(
                 mode="edit",
                 size=size,
                 images=result.get("data") or [],
+                project_id=project_id,
             )
         activity_log_service.record(
             "images.edits",
@@ -231,7 +236,7 @@ def _run_edit_request(
             role=str(identity.get("role") or ""),
             prompt=prompt,
             duration_ms=int((time.perf_counter() - started_at) * 1000),
-            metadata={"stream": False, "n": n, "size": size, "image_count": len(images), "result_count": result_count},
+            metadata={"stream": False, "n": n, "size": size, "image_count": len(images), "result_count": result_count, "project_id": project_id},
         )
         return _format_image_api_result(result, records, response_format)
     except ImageGenerationError as exc:
@@ -325,6 +330,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 response_format=body.response_format,
                 base_url=base_url,
                 started_at=started_at,
+                project_id=body.project_id,
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)
@@ -354,6 +360,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 response_format=body.response_format,
                 base_url=base_url,
                 started_at=started_at,
+                project_id=body.project_id,
             ),
         )
         return {"job": job}
@@ -370,6 +377,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             size: str | None = Form(default=None),
             response_format: str = Form(default="b64_json"),
             stream: bool | None = Form(default=None),
+            project_id: str | None = Form(default=None),
     ):
         identity = require_identity(authorization)
         started_at = time.perf_counter()
@@ -434,6 +442,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 response_format=response_format,
                 base_url=base_url,
                 started_at=started_at,
+                project_id=project_id,
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)
@@ -449,6 +458,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             n: int = Form(default=1),
             size: str | None = Form(default=None),
             response_format: str = Form(default="url"),
+            project_id: str | None = Form(default=None),
     ):
         identity = require_identity(authorization)
         started_at = time.perf_counter()
@@ -481,6 +491,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 response_format=response_format,
                 base_url=base_url,
                 started_at=started_at,
+                project_id=project_id,
             ),
         )
         return {"job": job}

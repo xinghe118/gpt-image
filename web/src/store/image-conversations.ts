@@ -40,6 +40,7 @@ export type ImageTurn = {
 
 export type ImageConversation = {
   id: string;
+  projectId?: string;
   title: string;
   createdAt: string;
   updatedAt: string;
@@ -175,6 +176,7 @@ function normalizeConversation(conversation: ImageConversation & Record<string, 
 
   return {
     id: String(conversation.id || `${Date.now()}`),
+    projectId: String(conversation.projectId || conversation.project_id || "default"),
     title: String(conversation.title || ""),
     createdAt: String(conversation.createdAt || lastTurn?.createdAt || new Date().toISOString()),
     updatedAt: String(conversation.updatedAt || lastTurn?.createdAt || new Date().toISOString()),

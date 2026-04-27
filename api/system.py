@@ -161,9 +161,17 @@ def create_router(app_version: str) -> APIRouter:
             offset: int = Query(default=0, ge=0),
             q: str = "",
             mode: str = "",
+            project_id: str = "",
     ):
         identity = require_identity(authorization)
-        return image_library_service.list_images(identity=identity, limit=limit, offset=offset, query=q, mode=mode)
+        return image_library_service.list_images(
+            identity=identity,
+            limit=limit,
+            offset=offset,
+            query=q,
+            mode=mode,
+            project_id=project_id,
+        )
 
     return router
 

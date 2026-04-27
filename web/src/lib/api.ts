@@ -115,6 +115,8 @@ export type LibraryImageItem = {
   subject_id: string;
   subject_name: string;
   role: string;
+  project_id?: string;
+  project_name?: string;
   prompt: string;
   model: string;
   mode: string;
@@ -125,6 +127,18 @@ export type LibraryImageItem = {
   thumb_url?: string;
   b64_json?: string;
   revised_prompt?: string;
+};
+
+export type ProjectItem = {
+  id: string;
+  subject_id: string;
+  subject_name: string;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  archived: boolean;
+  is_default?: boolean;
 };
 
 export async function login(authKey: string) {
@@ -226,13 +240,14 @@ export async function createUpstreamAccount(upstream: {
   });
 }
 
-export async function createImageGenerationJob(prompt: string, model?: ImageModel, size?: string) {
+export async function createImageGenerationJob(prompt: string, model?: ImageModel, size?: string, projectId?: string) {
   return httpRequest<{ job: ImageJob }>("/api/image/jobs/generations", {
     method: "POST",
     body: {
       prompt,
       ...(model ? { model } : {}),
       ...(size ? { size } : {}),
+      ...(projectId ? { project_id: projectId } : {}),
       n: 1,
       response_format: "url",
     },
@@ -276,7 +291,7 @@ export async function updateSettingsConfig(settings: SettingsConfig) {
   });
 }
 
-export async function createImageEditJob(files: File | File[], prompt: string, model?: ImageModel, size?: string) {
+export async function createImageEditJob(files: File | File[], prompt: string, model?: ImageModel, size?: string, projectId?: string) {
   const formData = new FormData();
   const uploadFiles = Array.isArray(files) ? files : [files];
 
@@ -289,6 +304,9 @@ export async function createImageEditJob(files: File | File[], prompt: string, m
   }
   if (size) {
     formData.append("size", size);
+  }
+  if (projectId) {
+    formData.append("project_id", projectId);
   }
   formData.append("n", "1");
   formData.append("response_format", "url");
@@ -624,7 +642,18 @@ export async function fetchActivityLogSummary() {
   return httpRequest<{ summary: ActivityLogSummary }>("/api/logs/summary");
 }
 
-export async function fetchLibraryItems(params: { limit?: number; offset?: number; q?: string; mode?: string } = {}) {
+export async function fetchProjects() {
+  return httpRequest<{ items: ProjectItem[] }>("/api/projects");
+}
+
+export async function createProject(project: { name: string; description?: string }) {
+  return httpRequest<{ item: ProjectItem; items: ProjectItem[] }>("/api/projects", {
+    method: "POST",
+    body: project,
+  });
+}
+
+export async function fetchLibraryItems(params: { limit?: number; offset?: number; q?: string; mode?: string; project_id?: string } = {}) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== "") {

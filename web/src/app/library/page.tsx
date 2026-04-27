@@ -226,15 +226,6 @@ export default function LibraryPage() {
                   <span className="rounded-lg bg-slate-100 px-2 py-1">{formatTime(item.created_at)}</span>
                   {session.role === "admin" ? <span className="rounded-lg bg-cyan-50 px-2 py-1 text-cyan-700">{item.subject_name}</span> : null}
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9 rounded-lg border-slate-200 bg-white text-slate-700"
-                  onClick={() => continueEdit(item)}
-                >
-                  <Pencil className="size-4" />
-                  继续编辑
-                </Button>
               </div>
             </article>
           ))}

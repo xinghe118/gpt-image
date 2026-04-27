@@ -225,6 +225,24 @@ function dataUrlToFile(dataUrl: string, fileName: string, mimeType?: string) {
   return new File([bytes], fileName, { type: mimeType || matchedMimeType || "image/png" });
 }
 
+async function imageUrlToReferenceImage(url: string, fileName: string): Promise<StoredReferenceImage | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error("读取结果图失败");
+    }
+    const blob = await response.blob();
+    const dataUrl = await readFileAsDataUrl(new File([blob], fileName, { type: blob.type || "image/png" }));
+    return {
+      name: fileName,
+      type: blob.type || "image/png",
+      dataUrl,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildReferenceImageFromResult(image: StoredImage, fileName: string): StoredReferenceImage | null {
   if (!image.b64_json) {
     return null;
@@ -774,12 +792,16 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   }, []);
 
   const handleContinueEdit = useCallback(
-    (conversationId: string, image: StoredImage | StoredReferenceImage) => {
-      const nextReferenceImage =
+    async (conversationId: string, image: StoredImage | StoredReferenceImage) => {
+      const nextReferenceImage = await (
         "dataUrl" in image
-          ? image
-          : buildReferenceImageFromResult(image, `conversation-${conversationId}-${Date.now()}.png`);
+          ? Promise.resolve(image)
+          : image.url
+            ? imageUrlToReferenceImage(image.url, `conversation-${conversationId}-${Date.now()}.png`)
+            : Promise.resolve(buildReferenceImageFromResult(image, `conversation-${conversationId}-${Date.now()}.png`))
+      );
       if (!nextReferenceImage) {
+        toast.error("无法读取结果图，请从作品库下载后作为参考图上传");
         return;
       }
 
@@ -877,7 +899,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                 ? await editImage(referenceFiles, queuedTurn.prompt, queuedTurn.model, queuedTurn.size)
                 : await generateImage(queuedTurn.prompt, queuedTurn.model, queuedTurn.size);
             const first = data.data?.[0];
-            if (!first?.b64_json) {
+            if (!first?.b64_json && !first?.url) {
               throw new Error("未返回图片数据");
             }
 
@@ -885,6 +907,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               id: pendingImage.id,
               status: "success",
               b64_json: first.b64_json,
+              url: first.url,
             };
 
             await updateConversation(

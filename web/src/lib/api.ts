@@ -175,8 +175,14 @@ export async function updateAccount(
   });
 }
 
+export type GeneratedImageData = {
+  b64_json?: string;
+  url?: string;
+  revised_prompt?: string;
+};
+
 export async function generateImage(prompt: string, model?: ImageModel, size?: string) {
-  return httpRequest<{ created: number; data: Array<{ b64_json: string; revised_prompt?: string }> }>(
+  return httpRequest<{ created: number; data: GeneratedImageData[] }>(
     "/v1/images/generations",
     {
       method: "POST",
@@ -185,7 +191,7 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
         ...(model ? { model } : {}),
         ...(size ? { size } : {}),
         n: 1,
-        response_format: "b64_json",
+        response_format: "url",
       },
     },
   );
@@ -206,8 +212,9 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
     formData.append("size", size);
   }
   formData.append("n", "1");
+  formData.append("response_format", "url");
 
-  return httpRequest<{ created: number; data: Array<{ b64_json: string; revised_prompt?: string }> }>(
+  return httpRequest<{ created: number; data: GeneratedImageData[] }>(
     "/v1/images/edits",
     {
       method: "POST",

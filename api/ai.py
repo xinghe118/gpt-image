@@ -59,6 +59,30 @@ def _has_image_generation_tool(payload: dict[str, object]) -> bool:
     return any(isinstance(tool, dict) and tool.get("type") == "image_generation" for tool in tools)
 
 
+def _format_image_api_result(
+        result: dict[str, object],
+        records: list[dict[str, object]],
+        response_format: str,
+) -> dict[str, object]:
+    data = result.get("data") if isinstance(result.get("data"), list) else []
+    formatted: list[dict[str, object]] = []
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            continue
+        record = records[index] if index < len(records) else {}
+        revised_prompt = str(item.get("revised_prompt") or record.get("revised_prompt") or "").strip()
+        if response_format == "url":
+            image_url = str(record.get("image_url") or "").strip()
+            if image_url:
+                formatted.append({"url": image_url, "revised_prompt": revised_prompt})
+            continue
+        next_item = dict(item)
+        if record.get("image_url"):
+            next_item["url"] = record.get("image_url")
+        formatted.append(next_item)
+    return {"created": result.get("created"), "data": formatted}
+
+
 def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
     router = APIRouter()
 
@@ -123,12 +147,13 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             )
         try:
             result = await run_in_threadpool(
-                chatgpt_service.generate_with_pool, body.prompt, body.model, body.n, body.size, body.response_format, base_url
+                chatgpt_service.generate_with_pool, body.prompt, body.model, body.n, body.size, "b64_json", base_url
             )
             result_count = len(result.get("data") or [])
+            records: list[dict[str, object]] = []
             if result_count > 0:
                 auth_service.consume_quota(identity, result_count)
-                image_library_service.record_images(
+                records = image_library_service.record_images(
                     identity=identity,
                     prompt=body.prompt,
                     model=body.model,
@@ -146,7 +171,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 duration_ms=int((time.perf_counter() - started_at) * 1000),
                 metadata={"stream": False, "n": body.n, "size": body.size, "result_count": result_count},
             )
-            return result
+            return _format_image_api_result(result, records, body.response_format)
         except ImageGenerationError as exc:
             activity_log_service.record(
                 "images.generations",
@@ -228,12 +253,13 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             )
         try:
             result = await run_in_threadpool(
-                chatgpt_service.edit_with_pool, prompt, images, model, n, size, response_format, base_url
+                chatgpt_service.edit_with_pool, prompt, images, model, n, size, "b64_json", base_url
             )
             result_count = len(result.get("data") or [])
+            records: list[dict[str, object]] = []
             if result_count > 0:
                 auth_service.consume_quota(identity, result_count)
-                image_library_service.record_images(
+                records = image_library_service.record_images(
                     identity=identity,
                     prompt=prompt,
                     model=model,
@@ -251,7 +277,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 duration_ms=int((time.perf_counter() - started_at) * 1000),
                 metadata={"stream": False, "n": n, "size": size, "image_count": len(images), "result_count": result_count},
             )
-            return result
+            return _format_image_api_result(result, records, response_format)
         except ImageGenerationError as exc:
             activity_log_service.record(
                 "images.edits",

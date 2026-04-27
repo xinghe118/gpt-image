@@ -18,6 +18,16 @@ type ImageResultsProps = {
   formatConversationTime: (value: string) => string;
 };
 
+function getStoredImageSrc(image: StoredImage) {
+  if (image.url) {
+    return image.url;
+  }
+  if (image.b64_json) {
+    return `data:image/png;base64,${image.b64_json}`;
+  }
+  return "";
+}
+
 export function ImageResults({
   selectedConversation,
   onOpenLightbox,
@@ -56,11 +66,10 @@ export function ImageResults({
           id: `${turn.id}-reference-${index}`,
           src: image.dataUrl,
         }));
-        const successfulTurnImages = turn.images.flatMap((image) =>
-          image.status === "success" && image.b64_json
-            ? [{ id: image.id, src: `data:image/png;base64,${image.b64_json}` }]
-            : [],
-        );
+        const successfulTurnImages = turn.images.flatMap((image) => {
+          const src = image.status === "success" ? getStoredImageSrc(image) : "";
+          return src ? [{ id: image.id, src }] : [];
+        });
 
         return (
           <div key={turn.id} className="flex flex-col gap-4">
@@ -123,7 +132,8 @@ export function ImageResults({
 
                 <div className="columns-1 gap-4 space-y-4 sm:columns-2 xl:columns-3">
                   {turn.images.map((image, index) => {
-                    if (image.status === "success" && image.b64_json) {
+                    const imageSrc = image.status === "success" ? getStoredImageSrc(image) : "";
+                    if (imageSrc) {
                       const currentIndex = successfulTurnImages.findIndex((item) => item.id === image.id);
 
                       return (
@@ -137,7 +147,7 @@ export function ImageResults({
                             className="group block w-full cursor-zoom-in"
                           >
                             <img
-                              src={`data:image/png;base64,${image.b64_json}`}
+                              src={imageSrc}
                               alt={`Generated result ${index + 1}`}
                               className="block h-auto w-full transition duration-200 group-hover:brightness-90"
                             />

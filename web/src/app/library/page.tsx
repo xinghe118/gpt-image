@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Download, Images, LoaderCircle, Search, Sparkles, X } from "lucide-react";
+import { Copy, Download, Images, LoaderCircle, Pencil, Search, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { fetchLibraryItems, type LibraryImageItem } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
+
+const PENDING_REFERENCE_IMAGE_STORAGE_KEY = "gpt-image:pending_reference_image";
 
 function imageSrc(item: LibraryImageItem) {
   if (item.image_url) {
@@ -96,6 +98,27 @@ export default function LibraryPage() {
       toast.success("提示词已复制");
     } catch {
       toast.error("复制失败");
+    }
+  };
+
+  const continueEdit = (item: LibraryImageItem) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        PENDING_REFERENCE_IMAGE_STORAGE_KEY,
+        JSON.stringify({
+          id: item.id,
+          url: imageSrc(item),
+          prompt: item.prompt,
+          name: `library-${item.id}.png`,
+        }),
+      );
+      window.location.href = "/image/";
+    } catch {
+      toast.error("无法加入工作台，请下载后手动上传参考图");
     }
   };
 
@@ -200,6 +223,15 @@ export default function LibraryPage() {
                   <span className="rounded-lg bg-slate-100 px-2 py-1">{formatTime(item.created_at)}</span>
                   {session.role === "admin" ? <span className="rounded-lg bg-cyan-50 px-2 py-1 text-cyan-700">{item.subject_name}</span> : null}
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 rounded-lg border-slate-200 bg-white text-slate-700"
+                  onClick={() => continueEdit(item)}
+                >
+                  <Pencil className="size-4" />
+                  继续编辑
+                </Button>
               </div>
             </article>
           ))}
@@ -246,6 +278,10 @@ export default function LibraryPage() {
               </div>
             </div>
             <div className="flex gap-2 border-t border-slate-200 p-4">
+              <Button variant="outline" className="h-10 flex-1 rounded-lg border-slate-200 bg-white" onClick={() => continueEdit(selectedItem)}>
+                <Pencil className="size-4" />
+                继续编辑
+              </Button>
               <Button className="h-10 flex-1 rounded-lg bg-slate-950 text-white hover:bg-slate-800" onClick={() => downloadImage(selectedItem)}>
                 <Download className="size-4" />
                 下载

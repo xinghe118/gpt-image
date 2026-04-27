@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock3, LoaderCircle, Sparkles } from "lucide-react";
+import { Clock3, LoaderCircle, RotateCcw, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ type ImageResultsProps = {
   selectedConversation: ImageConversation | null;
   onOpenLightbox: (images: ImageLightboxItem[], index: number) => void;
   onContinueEdit: (conversationId: string, image: StoredImage | StoredReferenceImage) => void;
+  onRetryImage: (conversationId: string, turnId: string, imageId: string) => void;
   formatConversationTime: (value: string) => string;
 };
 
@@ -32,6 +33,7 @@ export function ImageResults({
   selectedConversation,
   onOpenLightbox,
   onContinueEdit,
+  onRetryImage,
   formatConversationTime,
 }: ImageResultsProps) {
   if (!selectedConversation) {
@@ -182,8 +184,17 @@ export function ImageResults({
                             !["1:1", "16:9", "9:16", "4:3", "3:4"].includes(turn.size) && "aspect-square",
                           )}
                         >
-                          <div className="flex h-full items-center justify-center px-6 py-8 text-center text-sm leading-6 text-rose-600">
-                            {image.error || "生成失败"}
+                          <div className="flex h-full flex-col items-center justify-center gap-4 px-6 py-8 text-center text-sm leading-6 text-rose-600">
+                            <div>{image.error || "生成失败"}</div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="rounded-full border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
+                              onClick={() => onRetryImage(selectedConversation.id, turn.id, image.id)}
+                            >
+                              <RotateCcw className="size-4" />
+                              重试
+                            </Button>
                           </div>
                         </div>
                       );

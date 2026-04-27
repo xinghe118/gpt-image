@@ -47,6 +47,7 @@ const ACTIVE_CONVERSATION_STORAGE_KEY = "gpt-image:image_active_conversation_id"
 const IMAGE_SIZE_STORAGE_KEY = "gpt-image:image_last_size";
 const IMAGE_MODEL_STORAGE_KEY = "gpt-image:image_last_model";
 const STYLE_PRESETS_STORAGE_KEY = "gpt-image:image_style_presets";
+const PENDING_REFERENCE_IMAGE_STORAGE_KEY = "gpt-image:pending_reference_image";
 const LEGACY_STORAGE_PREFIX = "chatgpt" + "2api";
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_STORAGE_PREFIX}:image_last_size`;
@@ -451,14 +452,24 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     () => conversations.find((item) => item.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
   );
-  const activeTaskCount = useMemo(
+  const taskSummary = useMemo(
     () =>
-      conversations.reduce((sum, conversation) => {
-        const stats = getImageConversationStats(conversation);
-        return sum + stats.queued + stats.running;
-      }, 0),
+      conversations.reduce(
+        (summary, conversation) => {
+          const stats = getImageConversationStats(conversation);
+          summary.queued += stats.queued;
+          summary.running += stats.running;
+          summary.failedImages += conversation.turns.reduce(
+            (sum, turn) => sum + turn.images.filter((image) => image.status === "error").length,
+            0,
+          );
+          return summary;
+        },
+        { queued: 0, running: 0, failedImages: 0 },
+      ),
     [conversations],
   );
+  const activeTaskCount = taskSummary.queued + taskSummary.running;
 
   useEffect(() => {
     conversationsRef.current = conversations;
@@ -903,6 +914,61 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [],
   );
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const rawPayload = window.localStorage.getItem(PENDING_REFERENCE_IMAGE_STORAGE_KEY);
+    if (!rawPayload) {
+      return;
+    }
+
+    window.localStorage.removeItem(PENDING_REFERENCE_IMAGE_STORAGE_KEY);
+    let cancelled = false;
+
+    const loadPendingReference = async () => {
+      try {
+        const payload = JSON.parse(rawPayload) as { url?: string; name?: string };
+        if (!payload.url) {
+          return;
+        }
+
+        const referenceImage = await imageUrlToReferenceImage(
+          payload.url,
+          payload.name || `library-reference-${Date.now()}.png`,
+        );
+        if (cancelled) {
+          return;
+        }
+        if (!referenceImage) {
+          toast.error("无法读取作品库图片，请下载后手动上传参考图");
+          return;
+        }
+
+        setSelectedConversationId(null);
+        setImageMode("edit");
+        setReferenceImages((prev) => [...prev, referenceImage]);
+        setReferenceImageFiles((prev) => [
+          ...prev,
+          dataUrlToFile(referenceImage.dataUrl, referenceImage.name, referenceImage.type),
+        ]);
+        setImagePrompt("");
+        textareaRef.current?.focus();
+        toast.success("已从作品库加入参考图，继续输入描述即可编辑");
+      } catch {
+        if (!cancelled) {
+          toast.error("读取作品库图片失败");
+        }
+      }
+    };
+
+    void loadPendingReference();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const openLightbox = useCallback((images: ImageLightboxItem[], index: number) => {
     if (images.length === 0) {
       return;
@@ -1113,6 +1179,41 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   );
   /* eslint-enable react-hooks/preserve-manual-memoization */
 
+  const handleRetryImage = useCallback(
+    async (conversationId: string, turnId: string, imageId: string) => {
+      const snapshot = conversationsRef.current.find((conversation) => conversation.id === conversationId);
+      const targetTurn = snapshot?.turns.find((turn) => turn.id === turnId);
+      const targetImage = targetTurn?.images.find((image) => image.id === imageId);
+      if (!snapshot || !targetTurn || targetImage?.status !== "error") {
+        return;
+      }
+
+      await updateConversation(conversationId, (current) => {
+        const conversation = current ?? snapshot;
+        return {
+          ...conversation,
+          updatedAt: new Date().toISOString(),
+          turns: conversation.turns.map((turn) =>
+            turn.id === turnId
+              ? {
+                  ...turn,
+                  status: "queued",
+                  error: undefined,
+                  images: turn.images.map((image) =>
+                    image.id === imageId ? { id: image.id, status: "loading" as const } : image,
+                  ),
+                }
+              : turn,
+          ),
+        };
+      });
+      setSelectedConversationId(conversationId);
+      toast.success("已重新加入生成队列");
+      void runConversationQueue(conversationId);
+    },
+    [runConversationQueue, updateConversation],
+  );
+
   useEffect(() => {
     for (const conversation of conversations) {
       if (
@@ -1253,8 +1354,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <Activity className="size-3.5" />
-                      {activeTaskCount > 0 ? `${activeTaskCount} 个任务处理中` : "空闲"}
+                      {activeTaskCount > 0
+                        ? `${taskSummary.running} 处理中 / ${taskSummary.queued} 排队`
+                        : "空闲"}
                     </span>
+                    {taskSummary.failedImages > 0 ? (
+                      <span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-600">
+                        {taskSummary.failedImages} 张失败可重试
+                      </span>
+                    ) : null}
                     <span>额度 {availableQuota}</span>
                   </div>
                 </div>
@@ -1295,6 +1403,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               selectedConversation={selectedConversation}
               onOpenLightbox={openLightbox}
               onContinueEdit={handleContinueEdit}
+              onRetryImage={handleRetryImage}
               formatConversationTime={formatConversationTime}
             />
           </div>

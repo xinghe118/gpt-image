@@ -138,6 +138,26 @@ class AuthService:
             self._save()
             return self._public_item(item), raw_key
 
+    def regenerate_key(self, key_id: str, *, role: AuthRole | None = None) -> tuple[dict[str, object], str] | None:
+        normalized_id = self._clean(key_id)
+        if not normalized_id:
+            return None
+        raw_key = f"sk-{secrets.token_urlsafe(24)}"
+        with self._lock:
+            for index, item in enumerate(self._items):
+                if item.get("id") != normalized_id:
+                    continue
+                if role is not None and item.get("role") != role:
+                    return None
+                next_item = dict(item)
+                next_item["key_hash"] = _hash_key(raw_key)
+                next_item["raw_key"] = raw_key
+                next_item["last_used_at"] = None
+                self._items[index] = next_item
+                self._save()
+                return self._public_item(next_item, include_raw_key=True), raw_key
+        return None
+
     def update_key(
         self,
         key_id: str,

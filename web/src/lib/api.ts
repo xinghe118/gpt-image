@@ -256,6 +256,12 @@ export async function updateUserKey(
   });
 }
 
+export async function regenerateUserKey(keyId: string) {
+  return httpRequest<{ item: UserKey; key: string; items: UserKey[] }>(`/api/auth/users/${keyId}/regenerate`, {
+    method: "POST",
+  });
+}
+
 export async function deleteUserKey(keyId: string) {
   return httpRequest<{ items: UserKey[] }>(`/api/auth/users/${keyId}`, {
     method: "DELETE",

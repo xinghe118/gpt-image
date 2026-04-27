@@ -108,6 +108,24 @@ class AuthServiceTests(unittest.TestCase):
             self.assertFalse(service.delete_key(item["id"], role="user"))
             self.assertEqual(service.list_keys(role="user"), [])
 
+    def test_regenerate_user_key_preserves_quota_and_invalidates_old_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            service = AuthService(JSONStorageBackend(Path(tmp_dir) / "accounts.json", Path(tmp_dir) / "auth_keys.json"))
+            item, raw_key = service.create_key(role="user", name="Alice", quota_limit=10)
+            service.consume_quota(item, 3)
+
+            result = service.regenerate_key(item["id"], role="user")
+
+            self.assertIsNotNone(result)
+            next_item, next_raw_key = result
+            self.assertNotEqual(next_raw_key, raw_key)
+            self.assertEqual(next_item["key"], next_raw_key)
+            self.assertEqual(next_item["quota_limit"], 10)
+            self.assertEqual(next_item["quota_used"], 3)
+            self.assertIsNone(next_item["last_used_at"])
+            self.assertIsNone(service.authenticate(raw_key))
+            self.assertIsNotNone(service.authenticate(next_raw_key))
+
     def test_authenticate_ignores_last_used_save_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             service = AuthService(JSONStorageBackend(Path(tmp_dir) / "accounts.json", Path(tmp_dir) / "auth_keys.json"))

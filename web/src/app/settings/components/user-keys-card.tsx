@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Ban, CheckCircle2, Copy, Gauge, KeyRound, LoaderCircle, Plus, Save, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Ban, CheckCircle2, Copy, Gauge, KeyRound, LoaderCircle, Plus, RotateCw, Save, SlidersHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { createUserKey, deleteUserKey, fetchUserKeys, updateUserKey, type UserKey } from "@/lib/api";
+import { createUserKey, deleteUserKey, fetchUserKeys, regenerateUserKey, updateUserKey, type UserKey } from "@/lib/api";
 
 function formatDateTime(value?: string | null) {
   if (!value) {
@@ -158,6 +158,24 @@ export function UserKeysCard() {
     }
   };
 
+  const handleRegenerate = async (item: UserKey) => {
+    if (!window.confirm(`重新生成「${item.name}」的密钥吗？旧密钥会立即失效。`)) {
+      return;
+    }
+    setItemPending(item.id, true);
+    try {
+      const data = await regenerateUserKey(item.id);
+      setItems(data.items);
+      setRevealedKey(data.key);
+      await handleCopy(data.key);
+      toast.success("用户密钥已重新生成");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "重新生成用户密钥失败");
+    } finally {
+      setItemPending(item.id, false);
+    }
+  };
+
   const handleDelete = async (item: UserKey) => {
     if (!window.confirm(`确认删除用户密钥「${item.name}」吗？`)) {
       return;
@@ -244,13 +262,25 @@ export function UserKeysCard() {
                         <button
                           type="button"
                           className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-500 transition hover:bg-stone-200 hover:text-stone-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-stone-100 disabled:hover:text-stone-500"
-                          onClick={() => item.key ? void handleCopy(item.key) : toast.info("旧密钥没有保存明文，请重新创建后复制")}
+                          onClick={() => item.key ? void handleCopy(item.key) : toast.info("旧密钥没有保存明文，请先重新生成")}
                           disabled={!item.key}
-                          title={item.key ? "复制用户密钥" : "旧密钥没有保存明文"}
+                          title={item.key ? "复制用户密钥" : "旧密钥没有保存明文，请先重新生成"}
                         >
                           <Copy className="size-3" />
                           复制密钥
                         </button>
+                        {!item.key ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void handleRegenerate(item)}
+                            disabled={isPending}
+                            title="生成新的可复制密钥"
+                          >
+                            {isPending ? <LoaderCircle className="size-3 animate-spin" /> : <RotateCw className="size-3" />}
+                            重新生成
+                          </button>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500">
                         <span>创建时间 {formatDateTime(item.created_at)}</span>

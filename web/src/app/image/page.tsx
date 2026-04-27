@@ -35,6 +35,7 @@ import {
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import {
   deleteImageConversation,
+  deleteImageConversations,
   getImageConversationStats,
   listImageConversations,
   saveImageConversations,
@@ -993,10 +994,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const handleClearHistory = async () => {
     try {
+      const deletingIds = conversationsRef.current
+        .filter((conversation) => (conversation.projectId || "default") === activeProjectId)
+        .map((conversation) => conversation.id);
       const nextConversations = conversationsRef.current.filter(
         (conversation) => (conversation.projectId || "default") !== activeProjectId,
       );
-      await saveImageConversations(nextConversations);
+      await deleteImageConversations(deletingIds);
       conversationsRef.current = nextConversations;
       setConversations(nextConversations);
       setSelectedConversationId(null);

@@ -2,6 +2,7 @@
 
 import localforage from "localforage";
 
+import { httpRequest } from "@/lib/request";
 import type { ImageModel } from "@/lib/api";
 
 export type ImageConversationMode = "generate" | "edit";
@@ -41,6 +42,11 @@ export type ImageTurn = {
 export type ImageConversation = {
   id: string;
   projectId?: string;
+  project_id?: string;
+  project_name?: string;
+  subject_id?: string;
+  subject_name?: string;
+  role?: string;
   title: string;
   createdAt: string;
   updatedAt: string;
@@ -63,6 +69,7 @@ const legacyImageConversationStorage = localforage.createInstance({
 });
 
 const IMAGE_CONVERSATIONS_KEY = "items";
+const SERVER_MIGRATION_KEY = "gpt-image:server_conversations_migrated";
 let imageConversationWriteQueue: Promise<void> = Promise.resolve();
 
 function normalizeStoredImage(image: StoredImage): StoredImage {
@@ -177,6 +184,11 @@ function normalizeConversation(conversation: ImageConversation & Record<string, 
   return {
     id: String(conversation.id || `${Date.now()}`),
     projectId: String(conversation.projectId || conversation.project_id || "default"),
+    project_id: String(conversation.project_id || conversation.projectId || "default"),
+    project_name: typeof conversation.project_name === "string" ? conversation.project_name : undefined,
+    subject_id: typeof conversation.subject_id === "string" ? conversation.subject_id : undefined,
+    subject_name: typeof conversation.subject_name === "string" ? conversation.subject_name : undefined,
+    role: typeof conversation.role === "string" ? conversation.role : undefined,
     title: String(conversation.title || ""),
     createdAt: String(conversation.createdAt || lastTurn?.createdAt || new Date().toISOString()),
     updatedAt: String(conversation.updatedAt || lastTurn?.createdAt || new Date().toISOString()),
@@ -215,13 +227,70 @@ async function readStoredImageConversations(): Promise<ImageConversation[]> {
   return items.map(normalizeConversation);
 }
 
+function getConversationMigrationKey() {
+  if (typeof window === "undefined") {
+    return SERVER_MIGRATION_KEY;
+  }
+  return `${SERVER_MIGRATION_KEY}:${window.localStorage.getItem("gpt-image_auth_key") || "anonymous"}`;
+}
+
+function mergeConversations(...groups: ImageConversation[][]): ImageConversation[] {
+  const byId = new Map<string, ImageConversation>();
+  groups.flat().forEach((conversation) => {
+    const normalized = normalizeConversation(conversation);
+    const previous = byId.get(normalized.id);
+    if (!previous || normalized.updatedAt.localeCompare(previous.updatedAt) >= 0) {
+      byId.set(normalized.id, normalized);
+    }
+  });
+  return sortImageConversations([...byId.values()]);
+}
+
+async function fetchServerImageConversations(): Promise<ImageConversation[]> {
+  const data = await httpRequest<{ items: Array<ImageConversation & Record<string, unknown>> }>("/api/conversations");
+  return sortImageConversations(data.items.map(normalizeConversation));
+}
+
+async function saveServerImageConversations(conversations: ImageConversation[]): Promise<ImageConversation[]> {
+  const data = await httpRequest<{ items: Array<ImageConversation & Record<string, unknown>> }>("/api/conversations", {
+    method: "POST",
+    body: { items: conversations.map(normalizeConversation) },
+  });
+  return sortImageConversations(data.items.map(normalizeConversation));
+}
+
 export async function listImageConversations(): Promise<ImageConversation[]> {
-  return sortImageConversations(await readStoredImageConversations());
+  const localItems = await readStoredImageConversations();
+  try {
+    const serverItems = await fetchServerImageConversations();
+    const migrationKey = getConversationMigrationKey();
+    const hasMigrated = typeof window !== "undefined" && window.localStorage.getItem(migrationKey) === "1";
+    if (!hasMigrated && localItems.length > 0) {
+      const merged = mergeConversations(serverItems, localItems);
+      const savedItems = await saveServerImageConversations(merged);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(migrationKey, "1");
+      }
+      await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, savedItems);
+      return savedItems;
+    }
+    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, serverItems);
+    return serverItems;
+  } catch {
+    return sortImageConversations(localItems);
+  }
 }
 
 export async function saveImageConversations(conversations: ImageConversation[]): Promise<void> {
   await queueImageConversationWrite(async () => {
     const normalizedItems = sortImageConversations(conversations.map(normalizeConversation));
+    try {
+      const serverItems = await saveServerImageConversations(normalizedItems);
+      await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, serverItems);
+      return;
+    } catch {
+      // Keep local cache writable if the backend is temporarily unavailable.
+    }
     await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, normalizedItems);
   });
 }
@@ -233,6 +302,17 @@ export async function saveImageConversation(conversation: ImageConversation): Pr
       normalizeConversation(conversation),
       ...items.filter((item) => item.id !== conversation.id),
     ]);
+    try {
+      await httpRequest<{ item: ImageConversation & Record<string, unknown> }>(
+        `/api/conversations/${encodeURIComponent(conversation.id)}`,
+        {
+          method: "POST",
+          body: normalizeConversation(conversation),
+        },
+      );
+    } catch {
+      // Keep local cache writable if the backend is temporarily unavailable.
+    }
     await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, nextItems);
   });
 }
@@ -240,6 +320,13 @@ export async function saveImageConversation(conversation: ImageConversation): Pr
 export async function deleteImageConversation(id: string): Promise<void> {
   await queueImageConversationWrite(async () => {
     const items = await readStoredImageConversations();
+    try {
+      await httpRequest<{ ok: boolean }>(`/api/conversations/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      // Local deletion still proceeds so the UI remains responsive.
+    }
     await imageConversationStorage.setItem(
       IMAGE_CONVERSATIONS_KEY,
       items.filter((item) => item.id !== id),
@@ -247,8 +334,45 @@ export async function deleteImageConversation(id: string): Promise<void> {
   });
 }
 
+export async function deleteImageConversations(ids: string[]): Promise<void> {
+  const uniqueIds = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (uniqueIds.length === 0) {
+    return;
+  }
+  await queueImageConversationWrite(async () => {
+    const items = await readStoredImageConversations();
+    await Promise.all(
+      uniqueIds.map(async (id) => {
+        try {
+          await httpRequest<{ ok: boolean }>(`/api/conversations/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
+        } catch {
+          // Local deletion still proceeds so the UI remains responsive.
+        }
+      }),
+    );
+    await imageConversationStorage.setItem(
+      IMAGE_CONVERSATIONS_KEY,
+      items.filter((item) => !uniqueIds.includes(item.id)),
+    );
+  });
+}
+
 export async function clearImageConversations(): Promise<void> {
   await queueImageConversationWrite(async () => {
+    const items = await readStoredImageConversations();
+    try {
+      await Promise.all(
+        items.map((item) =>
+          httpRequest<{ ok: boolean }>(`/api/conversations/${encodeURIComponent(item.id)}`, {
+            method: "DELETE",
+          }),
+        ),
+      );
+    } catch {
+      // Local clearing still proceeds so the UI remains responsive.
+    }
     await imageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY);
     await legacyImageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY);
   });

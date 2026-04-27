@@ -181,6 +181,8 @@ class AppDataStore:
 
         migrated: dict[str, int | str] = {
             "library": 0,
+            "projects": 0,
+            "conversations": 0,
             "activity_logs": 0,
             "cpa_config": 0,
             "sub2api_config": 0,
@@ -192,6 +194,16 @@ class AppDataStore:
             if isinstance(library, dict) and isinstance(library.get("items"), list):
                 self.save_document("library", library)
                 migrated["library"] = len(library["items"])
+
+            projects = _read_json(DATA_DIR / "projects.json", {})
+            if isinstance(projects, dict) and isinstance(projects.get("items"), list):
+                self.save_document("projects", projects)
+                migrated["projects"] = len(projects["items"])
+
+            conversations = _read_json(DATA_DIR / "conversations.json", {})
+            if isinstance(conversations, dict) and isinstance(conversations.get("items"), list):
+                self.save_document("conversations", conversations)
+                migrated["conversations"] = len(conversations["items"])
 
             cpa_config = _read_json(DATA_DIR / "cpa_config.json", [])
             if isinstance(cpa_config, (list, dict)):

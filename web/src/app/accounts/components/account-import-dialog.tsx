@@ -25,11 +25,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { createAccounts, type Account } from "@/lib/api";
+import { createAccounts, createUpstreamAccount, type Account } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type ImportMethod = "menu" | "token" | "session" | "cpa";
+type ImportMethod = "menu" | "token" | "session" | "cpa" | "upstream";
 
 type AccountImportDialogProps = {
   disabled?: boolean;
@@ -111,6 +112,12 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingCpaImport, setPendingCpaImport] = useState<PendingCpaImport | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [upstreamName, setUpstreamName] = useState("");
+  const [upstreamBaseUrl, setUpstreamBaseUrl] = useState("");
+  const [upstreamApiKey, setUpstreamApiKey] = useState("");
+  const [upstreamModel, setUpstreamModel] = useState("gpt-image-2");
+  const [upstreamQuota, setUpstreamQuota] = useState("");
+  const [upstreamSupportsEdit, setUpstreamSupportsEdit] = useState(true);
 
   const txtInputRef = useRef<HTMLInputElement | null>(null);
   const cpaInputRef = useRef<HTMLInputElement | null>(null);
@@ -121,6 +128,12 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
     setSessionInput("");
     setPendingCpaImport(null);
     setConfirmOpen(false);
+    setUpstreamName("");
+    setUpstreamBaseUrl("");
+    setUpstreamApiKey("");
+    setUpstreamModel("gpt-image-2");
+    setUpstreamQuota("");
+    setUpstreamSupportsEdit(true);
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -255,6 +268,43 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
     } catch (error) {
       const message = error instanceof Error ? error.message : "读取 CPA JSON 文件失败";
       toast.error(message);
+    }
+  };
+
+  const handleImportUpstream = async () => {
+    const baseUrl = upstreamBaseUrl.trim();
+    const apiKey = upstreamApiKey.trim();
+
+    if (!baseUrl || !apiKey) {
+      toast.error("请填写 URL 和 Key");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const quota = upstreamQuota.trim() ? Number(upstreamQuota.trim()) : null;
+      if (quota !== null && (!Number.isFinite(quota) || quota < 0)) {
+        toast.error("额度必须是大于等于 0 的数字，留空表示未知或不限");
+        return;
+      }
+
+      const data = await createUpstreamAccount({
+        name: upstreamName.trim() || "URL + Key 通道",
+        base_url: baseUrl,
+        api_key: apiKey,
+        model: upstreamModel.trim() || "gpt-image-2",
+        quota,
+        capabilities: upstreamSupportsEdit ? ["image_generation", "image_edit"] : ["image_generation"],
+      });
+      onImported(data.items);
+      setOpen(false);
+      resetState();
+      toast.success(`已添加 ${data.added ?? 0} 个 URL + Key 通道`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "添加通道失败";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -403,8 +453,90 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
       );
     }
 
+    if (method === "upstream") {
+      return (
+        <div className="space-y-4">
+          <button
+            type="button"
+            onClick={() => setMethod("menu")}
+            className="inline-flex items-center gap-1 text-sm text-stone-500 transition hover:text-stone-800"
+          >
+            <ArrowLeft className="size-4" />
+            返回导入方式
+          </button>
+          <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-4 text-sm leading-6 text-sky-900">
+            适用于 OpenAI 兼容的生图接口。URL 可以填写 `https://api.example.com/v1`，
+            系统会自动调用 `/images/generations` 和 `/images/edits`。
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">通道名称</label>
+              <Input
+                value={upstreamName}
+                onChange={(event) => setUpstreamName(event.target.value)}
+                placeholder="例如：主站 OpenAI 兼容通道"
+                className="h-11 rounded-xl border-stone-200 bg-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">默认模型</label>
+              <Input
+                value={upstreamModel}
+                onChange={(event) => setUpstreamModel(event.target.value)}
+                placeholder="gpt-image-2"
+                className="h-11 rounded-xl border-stone-200 bg-white"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium text-stone-700">Base URL</label>
+              <Input
+                value={upstreamBaseUrl}
+                onChange={(event) => setUpstreamBaseUrl(event.target.value)}
+                placeholder="https://api.example.com/v1"
+                className="h-11 rounded-xl border-stone-200 bg-white"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium text-stone-700">API Key</label>
+              <Input
+                type="password"
+                value={upstreamApiKey}
+                onChange={(event) => setUpstreamApiKey(event.target.value)}
+                placeholder="sk-..."
+                className="h-11 rounded-xl border-stone-200 bg-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">可用额度</label>
+              <Input
+                value={upstreamQuota}
+                onChange={(event) => setUpstreamQuota(event.target.value)}
+                placeholder="留空表示未知或不限"
+                className="h-11 rounded-xl border-stone-200 bg-white"
+              />
+            </div>
+            <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700">
+              <input
+                type="checkbox"
+                checked={upstreamSupportsEdit}
+                onChange={(event) => setUpstreamSupportsEdit(event.target.checked)}
+                className="size-4 rounded border-stone-300"
+              />
+              支持图生图接口
+            </label>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-3">
+        <MethodCard
+          title="添加 URL + Key 生图通道"
+          description="提供兼容 OpenAI 图片接口的 URL 和 Key，直接加入号池用于调用。"
+          icon={ServerCog}
+          onClick={() => setMethod("upstream")}
+        />
         <MethodCard
           title="导入 Access Token"
           description="支持直接粘贴，一行一个；也支持从 TXT 文件读取，一行一个。"
@@ -469,7 +601,9 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                   ? "导入 Access Token"
                   : method === "session"
                     ? "导入 Session JSON"
-                    : "导入 CPA JSON"}
+                    : method === "cpa"
+                      ? "导入 CPA JSON"
+                      : "添加 URL + Key 通道"}
             </DialogTitle>
             <DialogDescription className="text-sm leading-6">
               {method === "menu"
@@ -478,7 +612,9 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                   ? "支持手动粘贴或从 TXT 文件导入，一行一个 Token。"
                   : method === "session"
                     ? "粘贴完整 Session JSON，系统会自动提取 accessToken。"
-                    : "支持一次读取多个本地 JSON 文件，并在提交前做数量确认。"}
+                    : method === "cpa"
+                      ? "支持一次读取多个本地 JSON 文件，并在提交前做数量确认。"
+                      : "添加兼容 OpenAI 图片接口的上游通道，真实 Key 仅保存在后端。"}
             </DialogDescription>
           </DialogHeader>
 
@@ -523,6 +659,16 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                 disabled={footerDisabled || !pendingCpaImport}
               >
                 查看导入确认
+              </Button>
+            ) : null}
+            {method === "upstream" ? (
+              <Button
+                className="h-10 rounded-xl bg-stone-950 px-5 text-white hover:bg-stone-800"
+                onClick={() => void handleImportUpstream()}
+                disabled={footerDisabled}
+              >
+                {isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                添加通道
               </Button>
             ) : null}
           </DialogFooter>

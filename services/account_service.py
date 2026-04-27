@@ -57,12 +57,16 @@ class AccountService:
         return -1
 
     @staticmethod
-    def _is_image_account_available(account: dict) -> bool:
+    def _is_image_account_available(account: dict, capability: str = "image_generation") -> bool:
         if not isinstance(account, dict):
             return False
         status = str(account.get("status") or "").strip()
         if status in {"禁用", "限流", "异常"}:
             return False
+        if str(account.get("provider") or "chatgpt") == "openai_compatible":
+            capabilities = account.get("capabilities")
+            if isinstance(capabilities, list) and capability not in capabilities:
+                return False
         if bool(account.get("image_quota_unknown")):
             return True
         return int(account.get("quota") or 0) > 0
@@ -128,6 +132,7 @@ class AccountService:
             return None
         normalized = dict(item)
         normalized["access_token"] = access_token
+        normalized["provider"] = self._clean_token(normalized.get("provider")) or "chatgpt"
         normalized["type"] = self._clean_token(normalized.get("type")) or "Free"
         normalized["status"] = self._clean_token(normalized.get("status")) or "正常"
         normalized["quota"] = int(normalized.get("quota") if normalized.get("quota") is not None else 0)
@@ -143,6 +148,16 @@ class AccountService:
         normalized["success"] = int(normalized.get("success") or 0)
         normalized["fail"] = int(normalized.get("fail") or 0)
         normalized["last_used_at"] = normalized.get("last_used_at")
+        if normalized["provider"] == "openai_compatible":
+            normalized["name"] = self._clean_token(normalized.get("name")) or "URL + Key 通道"
+            normalized["base_url"] = self._clean_token(normalized.get("base_url")).rstrip("/")
+            normalized["api_key"] = self._clean_token(normalized.get("api_key"))
+            normalized["default_model_slug"] = self._clean_token(normalized.get("default_model_slug")) or "gpt-image-2"
+            capabilities = normalized.get("capabilities")
+            normalized["capabilities"] = capabilities if isinstance(capabilities, list) else ["image_generation", "image_edit"]
+            normalized["image_quota_unknown"] = bool(normalized.get("image_quota_unknown", True))
+            if not normalized["base_url"] or not normalized["api_key"]:
+                return None
         return normalized
 
     @staticmethod
@@ -195,11 +210,25 @@ class AccountService:
             headers["oai-session-id"] = session_id
         return headers, impersonate
 
+    @staticmethod
+    def _mask_secret(value: Any) -> str:
+        secret = str(value or "").strip()
+        if not secret:
+            return ""
+        if len(secret) <= 10:
+            return f"{secret[:2]}****"
+        return f"{secret[:6]}****{secret[-4:]}"
+
     def _public_items(self, accounts: list[dict]) -> list[dict]:
         return [
             {
                 "id": hashlib.sha1(access_token.encode("utf-8")).hexdigest()[:16],
                 "access_token": access_token,
+                "provider": account.get("provider") or "chatgpt",
+                "name": account.get("name"),
+                "base_url": account.get("base_url"),
+                "apiKeyMasked": self._mask_secret(account.get("api_key")),
+                "capabilities": account.get("capabilities") or [],
                 "type": account.get("type") or "Free",
                 "status": account.get("status") or "正常",
                 "quota": account.get("quota") if account.get("quota") is not None else 0,
@@ -221,19 +250,27 @@ class AccountService:
         with self._lock:
             return [token for item in self._accounts if (token := self._clean_token(item.get("access_token")))]
 
-    def _list_available_candidate_tokens(self, excluded_tokens: set[str] | None = None) -> list[str]:
+    def _list_available_candidate_tokens(
+        self,
+        excluded_tokens: set[str] | None = None,
+        capability: str = "image_generation",
+    ) -> list[str]:
         excluded = {self._clean_token(token) for token in (excluded_tokens or set()) if self._clean_token(token)}
         return [
             token
             for item in self._accounts
-            if self._is_image_account_available(item)
+            if self._is_image_account_available(item, capability=capability)
                and (token := self._clean_token(item.get("access_token")))
                and token not in excluded
         ]
 
-    def _pick_next_candidate_token(self, excluded_tokens: set[str] | None = None) -> str:
+    def _pick_next_candidate_token(
+        self,
+        excluded_tokens: set[str] | None = None,
+        capability: str = "image_generation",
+    ) -> str:
         with self._lock:
-            tokens = self._list_available_candidate_tokens(excluded_tokens)
+            tokens = self._list_available_candidate_tokens(excluded_tokens, capability=capability)
             if not tokens:
                 raise RuntimeError("no available image quota")
             access_token = tokens[self._index % len(tokens)]
@@ -258,14 +295,14 @@ class AccountService:
             return None
         return self.update_account(access_token, remote_info)
 
-    def get_available_access_token(self) -> str:
+    def get_available_access_token(self, capability: str = "image_generation") -> str:
         attempted_tokens: set[str] = set()
         while True:
-            access_token = self._pick_next_candidate_token(excluded_tokens=attempted_tokens)
+            access_token = self._pick_next_candidate_token(excluded_tokens=attempted_tokens, capability=capability)
             attempted_tokens.add(access_token)
             token_ref = anonymize_token(access_token)
             account = self.refresh_account_state(access_token)
-            if self._is_image_account_available(account or {}):
+            if self._is_image_account_available(account or {}, capability=capability):
                 return access_token
             print(
                 f"[account-available] skip token={token_ref} "
@@ -332,6 +369,60 @@ class AccountService:
             self._save_accounts()
             items = self._public_items(self._accounts)
         return {"added": added, "skipped": skipped, "items": items}
+
+    def add_upstream_account(
+        self,
+        *,
+        name: str,
+        base_url: str,
+        api_key: str,
+        model: str,
+        quota: int | None = None,
+        capabilities: list[str] | None = None,
+    ) -> dict:
+        clean_base_url = self._clean_token(base_url).rstrip("/")
+        clean_api_key = self._clean_token(api_key)
+        if not clean_base_url:
+            raise ValueError("base_url is required")
+        if not clean_api_key:
+            raise ValueError("api_key is required")
+        digest = hashlib.sha1(f"{clean_base_url}\n{clean_api_key}".encode("utf-8")).hexdigest()[:24]
+        access_token = f"upstream:{digest}"
+        normalized_capabilities = [
+            capability
+            for capability in (capabilities or ["image_generation", "image_edit"])
+            if capability in {"image_generation", "image_edit"}
+        ] or ["image_generation"]
+        with self._lock:
+            indexed = {self._clean_token(item.get("access_token")): dict(item) for item in self._accounts}
+            current = indexed.get(access_token)
+            account = self._normalize_account(
+                {
+                    **(current or {}),
+                    "access_token": access_token,
+                    "provider": "openai_compatible",
+                    "name": self._clean_token(name) or "URL + Key 通道",
+                    "base_url": clean_base_url,
+                    "api_key": clean_api_key,
+                    "type": "API",
+                    "status": "正常",
+                    "quota": int(quota or 0),
+                    "image_quota_unknown": quota is None,
+                    "default_model_slug": self._clean_token(model) or "gpt-image-2",
+                    "capabilities": normalized_capabilities,
+                }
+            )
+            if account is None:
+                raise ValueError("invalid upstream account")
+            indexed[access_token] = account
+            self._accounts = list(indexed.values())
+            self._save_accounts()
+            return {
+                "added": 0 if current else 1,
+                "skipped": 1 if current else 0,
+                "item": self._public_items([account])[0],
+                "items": self._public_items(self._accounts),
+            }
 
     def delete_accounts(self, tokens: list[str]) -> dict:
         target_set = set(self._clean_tokens(tokens))
@@ -404,6 +495,15 @@ class AccountService:
         access_token = self._clean_token(access_token)
         if not access_token:
             raise ValueError("access_token is required")
+        account = self.get_account(access_token) or {}
+        if account.get("provider") == "openai_compatible":
+            return {
+                "status": account.get("status") or "正常",
+                "type": "API",
+                "quota": int(account.get("quota") or 0),
+                "image_quota_unknown": bool(account.get("image_quota_unknown", True)),
+                "default_model_slug": account.get("default_model_slug") or "gpt-image-2",
+            }
 
         headers, impersonate = self._build_remote_headers(access_token)
         token_ref = anonymize_token(access_token)

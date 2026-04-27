@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from fastapi import HTTPException
+from curl_cffi import requests
 
 from services.account_service import AccountService
 from services.config import config
@@ -84,6 +85,111 @@ class ChatGPTService:
     @staticmethod
     def _new_backend(access_token: str = "") -> OpenAIBackendAPI:
         return OpenAIBackendAPI(access_token=access_token)
+
+    def _get_account(self, access_token: str) -> dict[str, Any]:
+        return self.account_service.get_account(access_token) or {}
+
+    @staticmethod
+    def _join_upstream_url(base_url: str, path: str) -> str:
+        normalized = str(base_url or "").rstrip("/")
+        if normalized.endswith("/images"):
+            return f"{normalized}/{path.removeprefix('/images/')}"
+        return f"{normalized}{path}"
+
+    @staticmethod
+    def _normalize_upstream_items(items: object, prompt: str) -> list[dict[str, object]]:
+        normalized: list[dict[str, object]] = []
+        if not isinstance(items, list):
+            return normalized
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            revised_prompt = str(item.get("revised_prompt") or prompt).strip() or prompt
+            b64_json = str(item.get("b64_json") or "").strip()
+            if b64_json:
+                normalized.append({"b64_json": b64_json, "revised_prompt": revised_prompt})
+                continue
+            image_url = str(item.get("url") or "").strip()
+            if image_url:
+                response = requests.get(image_url, timeout=120)
+                if response.status_code >= 400:
+                    raise RuntimeError(f"upstream image download failed: HTTP {response.status_code}")
+                normalized.append(
+                    {
+                        "b64_json": base64.b64encode(response.content).decode("ascii"),
+                        "revised_prompt": revised_prompt,
+                    }
+                )
+        return normalized
+
+    def _upstream_images_generations(
+        self,
+        account: dict[str, Any],
+        *,
+        prompt: str,
+        model: str,
+        size: str | None,
+    ) -> dict[str, object]:
+        base_url = str(account.get("base_url") or "").rstrip("/")
+        api_key = str(account.get("api_key") or "").strip()
+        request_model = model or str(account.get("default_model_slug") or "gpt-image-2")
+        response = requests.post(
+            self._join_upstream_url(base_url, "/images/generations"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": request_model,
+                "prompt": prompt,
+                "n": 1,
+                "response_format": "b64_json",
+                **({"size": size} if size else {}),
+            },
+            timeout=300,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"upstream generation failed: HTTP {response.status_code} {response.text[:300]}")
+        payload = response.json()
+        return {
+            "created": payload.get("created") or int(time.time()),
+            "data": self._normalize_upstream_items(payload.get("data"), prompt),
+        }
+
+    def _upstream_images_edits(
+        self,
+        account: dict[str, Any],
+        *,
+        images: Iterable[tuple[bytes, str, str]],
+        prompt: str,
+        model: str,
+        size: str | None,
+    ) -> dict[str, object]:
+        base_url = str(account.get("base_url") or "").rstrip("/")
+        api_key = str(account.get("api_key") or "").strip()
+        request_model = model or str(account.get("default_model_slug") or "gpt-image-2")
+        files = [
+            ("image", (file_name or f"image_{index}.png", image_data, mime_type or "image/png"))
+            for index, (image_data, file_name, mime_type) in enumerate(images, start=1)
+        ]
+        data = {
+            "model": request_model,
+            "prompt": prompt,
+            "n": "1",
+            "response_format": "b64_json",
+            **({"size": size} if size else {}),
+        }
+        response = requests.post(
+            self._join_upstream_url(base_url, "/images/edits"),
+            headers={"Authorization": f"Bearer {api_key}"},
+            data=data,
+            files=files,
+            timeout=300,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"upstream edit failed: HTTP {response.status_code} {response.text[:300]}")
+        payload = response.json()
+        return {
+            "created": payload.get("created") or int(time.time()),
+            "data": self._normalize_upstream_items(payload.get("data"), prompt),
+        }
 
     def _get_text_access_token(self) -> str:
         tokens = self.account_service.list_tokens()
@@ -521,6 +627,32 @@ class ChatGPTService:
             base_url: str | None = None,
             images: list[str] | None = None,
     ) -> Iterator[dict[str, object]]:
+        account_info = self._get_account(request_token)
+        if account_info.get("provider") == "openai_compatible":
+            raw_result = (
+                self._upstream_images_edits(
+                    account_info,
+                    images=[
+                        (base64.b64decode(value), f"image_{image_index}.png", "image/png")
+                        for image_index, value in enumerate(images or [], start=1)
+                    ],
+                    prompt=prompt,
+                    model=model,
+                    size=size,
+                )
+                if images
+                else self._upstream_images_generations(account_info, prompt=prompt, model=model, size=size)
+            )
+            formatted_result = self._format_image_result(raw_result, prompt, response_format, base_url)
+            yield {
+                "object": "image.generation.result",
+                "created": formatted_result.get("created"),
+                "model": model,
+                "index": index,
+                "total": total,
+                "data": formatted_result.get("data") if isinstance(formatted_result.get("data"), list) else [],
+            }
+            return
         stream = self._new_backend(request_token).stream_image_chat_completions(
             prompt=prompt,
             model=model,
@@ -601,12 +733,22 @@ class ChatGPTService:
                     "total": n,
                 })
                 try:
-                    result = self._format_image_result(self._new_backend(request_token).images_generations(
-                        prompt=prompt,
-                        model=model,
-                        size=size,
-                        response_format="b64_json",
-                    ), prompt, response_format, base_url)
+                    account_info = self._get_account(request_token)
+                    if account_info.get("provider") == "openai_compatible":
+                        raw_result = self._upstream_images_generations(
+                            account_info,
+                            prompt=prompt,
+                            model=model,
+                            size=size,
+                        )
+                    else:
+                        raw_result = self._new_backend(request_token).images_generations(
+                            prompt=prompt,
+                            model=model,
+                            size=size,
+                            response_format="b64_json",
+                        )
+                    result = self._format_image_result(raw_result, prompt, response_format, base_url)
                     account = self.account_service.mark_image_result(request_token, success=True)
                     data = result.get("data")
                     image_items = [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
@@ -766,7 +908,7 @@ class ChatGPTService:
         for index in range(1, n + 1):
             while True:
                 try:
-                    request_token = self.account_service.get_available_access_token()
+                    request_token = self.account_service.get_available_access_token(capability="image_edit")
                 except RuntimeError as exc:
                     last_error = str(exc)
                     logger.warning({
@@ -786,13 +928,24 @@ class ChatGPTService:
                     "image_count": len(normalized_images),
                 })
                 try:
-                    result = self._format_image_result(self._new_backend(request_token).images_edits(
-                        image=self._encode_images(normalized_images),
-                        prompt=prompt,
-                        model=model,
-                        size=size,
-                        response_format="b64_json",
-                    ), prompt, response_format, base_url)
+                    account_info = self._get_account(request_token)
+                    if account_info.get("provider") == "openai_compatible":
+                        raw_result = self._upstream_images_edits(
+                            account_info,
+                            images=normalized_images,
+                            prompt=prompt,
+                            model=model,
+                            size=size,
+                        )
+                    else:
+                        raw_result = self._new_backend(request_token).images_edits(
+                            image=self._encode_images(normalized_images),
+                            prompt=prompt,
+                            model=model,
+                            size=size,
+                            response_format="b64_json",
+                        )
+                    result = self._format_image_result(raw_result, prompt, response_format, base_url)
                     account = self.account_service.mark_image_result(request_token, success=True)
                     if created is None:
                         created = result.get("created")
@@ -854,7 +1007,7 @@ class ChatGPTService:
         for index in range(1, n + 1):
             while True:
                 try:
-                    request_token = self.account_service.get_available_access_token()
+                    request_token = self.account_service.get_available_access_token(capability="image_edit")
                 except RuntimeError as exc:
                     last_error = str(exc)
                     logger.warning({

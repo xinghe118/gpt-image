@@ -61,6 +61,7 @@ const accountTypeOptions: { label: string; value: AccountType | "all" }[] = [
   { label: "ProLite", value: "ProLite" },
   { label: "Team", value: "Team" },
   { label: "Pro", value: "Pro" },
+  { label: "URL + Key", value: "API" },
 ];
 
 const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
@@ -155,6 +156,22 @@ function maskToken(token?: string) {
   return `${token.slice(0, 16)}...${token.slice(-8)}`;
 }
 
+function isUpstreamAccount(account: Account) {
+  return account.provider === "openai_compatible" || account.type === "API";
+}
+
+function formatCapabilities(capabilities?: string[]) {
+  if (!capabilities || capabilities.length === 0) {
+    return "文生图";
+  }
+  const labels = capabilities.map((item) => {
+    if (item === "image_generation") return "文生图";
+    if (item === "image_edit") return "图生图";
+    return item;
+  });
+  return Array.from(new Set(labels)).join(" / ");
+}
+
 function downloadTokens(accounts: Account[]) {
   const content = `${accounts.map((account) => account.access_token).join("\n")}\n`;
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -174,6 +191,7 @@ function normalizeAccounts(items: Account[]): Account[] {
       item.type === "ProLite" ||
       item.type === "Team" ||
       item.type === "Pro" ||
+      item.type === "API" ||
       item.type === "Free"
         ? item.type
         : "Free",
@@ -228,7 +246,10 @@ function AccountsPageContent() {
     const normalizedQuery = query.trim().toLowerCase();
     return accounts.filter((account) => {
       const searchMatched =
-        normalizedQuery.length === 0 || (account.email ?? "").toLowerCase().includes(normalizedQuery);
+        normalizedQuery.length === 0 ||
+        [account.email, account.name, account.base_url, account.access_token]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(normalizedQuery));
       const typeMatched = typeFilter === "all" || account.type === typeFilter;
       const statusMatched = statusFilter === "all" || account.status === statusFilter;
       return searchMatched && typeMatched && statusMatched;
@@ -526,7 +547,7 @@ function AccountsPageContent() {
                   setQuery(event.target.value);
                   setPage(1);
                 }}
-                placeholder="搜索邮箱"
+                placeholder="搜索邮箱、通道、URL 或 Token"
                 className="h-10 rounded-xl border-stone-200 bg-white/85 pl-10"
               />
             </div>
@@ -637,7 +658,7 @@ function AccountsPageContent() {
                         onCheckedChange={(checked) => toggleSelectAll(Boolean(checked))}
                       />
                     </th>
-                    <th className="w-56 px-4 py-3">token</th>
+                    <th className="w-64 px-4 py-3">通道</th>
                     <th className="w-28 px-4 py-3">类型</th>
                     <th className="w-24 px-4 py-3">状态</th>
                     <th className="w-56 px-4 py-3">账号信息</th>
@@ -652,6 +673,10 @@ function AccountsPageContent() {
                   {currentRows.map((account) => {
                     const status = statusMeta[account.status];
                     const StatusIcon = status.icon;
+                    const upstream = isUpstreamAccount(account);
+                    const channelTitle = upstream ? account.name || "URL + Key 通道" : maskToken(account.access_token);
+                    const channelSubtitle = upstream ? account.base_url || "OpenAI 兼容接口" : account.access_token;
+                    const copyValue = upstream ? account.base_url || account.access_token : account.access_token;
 
                     return (
                       <tr
@@ -671,16 +696,21 @@ function AccountsPageContent() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium tracking-tight text-stone-700">
-                              {maskToken(account.access_token)}
-                            </span>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="min-w-0">
+                              <div className="truncate font-medium tracking-tight text-stone-700">
+                                {channelTitle}
+                              </div>
+                              <div className="truncate text-xs text-stone-400">
+                                {upstream ? channelSubtitle : maskToken(channelSubtitle)}
+                              </div>
+                            </div>
                             <button
                               type="button"
-                              className="rounded-lg p-1 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
+                              className="shrink-0 rounded-lg p-1 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
                               onClick={() => {
-                                void navigator.clipboard.writeText(account.access_token);
-                                toast.success("token 已复制");
+                                void navigator.clipboard.writeText(copyValue);
+                                toast.success(upstream ? "通道 URL 已复制" : "token 已复制");
                               }}
                             >
                               <Copy className="size-4" />
@@ -702,7 +732,16 @@ function AccountsPageContent() {
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="text-xs leading-5 text-stone-500">{account.email ?? "—"}</div>
+                          <div className="text-xs leading-5 text-stone-500">
+                            {upstream ? (
+                              <div className="space-y-0.5">
+                                <div>{account.apiKeyMasked ? `Key ${account.apiKeyMasked}` : "Key 已保存"}</div>
+                                <div>{formatCapabilities(account.capabilities)}</div>
+                              </div>
+                            ) : (
+                              account.email ?? "—"
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant="info" className="rounded-md">

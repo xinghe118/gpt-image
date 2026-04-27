@@ -40,6 +40,15 @@ class AccountCreateRequest(BaseModel):
     tokens: list[str] = Field(default_factory=list)
 
 
+class UpstreamAccountCreateRequest(BaseModel):
+    name: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    model: str = "gpt-image-2"
+    quota: int | None = None
+    capabilities: list[str] = Field(default_factory=lambda: ["image_generation", "image_edit"])
+
+
 class AccountDeleteRequest(BaseModel):
     tokens: list[str] = Field(default_factory=list)
 
@@ -158,6 +167,21 @@ def create_router() -> APIRouter:
             "errors": refresh_result.get("errors", []),
             "items": refresh_result.get("items", result.get("items", [])),
         }
+
+    @router.post("/api/accounts/upstream")
+    async def create_upstream_account(body: UpstreamAccountCreateRequest, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            return account_service.add_upstream_account(
+                name=body.name,
+                base_url=body.base_url,
+                api_key=body.api_key,
+                model=body.model,
+                quota=body.quota,
+                capabilities=body.capabilities,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
 
     @router.delete("/api/accounts")
     async def delete_accounts(body: AccountDeleteRequest, authorization: str | None = Header(default=None)):

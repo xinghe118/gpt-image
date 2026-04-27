@@ -1,6 +1,6 @@
 import { httpRequest } from "@/lib/request";
 
-export type AccountType = "Free" | "Plus" | "ProLite" | "Pro" | "Team";
+export type AccountType = "Free" | "Plus" | "ProLite" | "Pro" | "Team" | "API";
 export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
 export type ImageModel = "auto" | "gpt-image-1" | "gpt-image-2" | "codex-gpt-image-2";
 export type AuthRole = "admin" | "user";
@@ -8,6 +8,11 @@ export type AuthRole = "admin" | "user";
 export type Account = {
   id: string;
   access_token: string;
+  provider?: "chatgpt" | "openai_compatible";
+  name?: string | null;
+  base_url?: string | null;
+  apiKeyMasked?: string;
+  capabilities?: string[];
   type: AccountType;
   status: AccountStatus;
   quota: number;
@@ -204,6 +209,20 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
       },
     },
   );
+}
+
+export async function createUpstreamAccount(upstream: {
+  name: string;
+  base_url: string;
+  api_key: string;
+  model: string;
+  quota?: number | null;
+  capabilities?: string[];
+}) {
+  return httpRequest<AccountMutationResponse>("/api/accounts/upstream", {
+    method: "POST",
+    body: upstream,
+  });
 }
 
 export async function createImageGenerationJob(prompt: string, model?: ImageModel, size?: string) {

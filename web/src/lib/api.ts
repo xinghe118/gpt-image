@@ -115,6 +115,7 @@ export type LibraryImageItem = {
   created_at: string;
   index: number;
   image_url: string;
+  thumb_url?: string;
   b64_json?: string;
   revised_prompt?: string;
 };
@@ -510,8 +511,17 @@ export type ActivityLogSummary = {
   latest: ActivityLog[];
 };
 
+export type PaginatedResponse<T> = {
+  items: T[];
+  total?: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+};
+
 export async function fetchActivityLogs(params: {
   limit?: number;
+  offset?: number;
   level?: string;
   status?: string;
   event?: string;
@@ -524,13 +534,20 @@ export async function fetchActivityLogs(params: {
     }
   });
   const query = search.toString();
-  return httpRequest<{ items: ActivityLog[] }>(`/api/logs${query ? `?${query}` : ""}`);
+  return httpRequest<PaginatedResponse<ActivityLog>>(`/api/logs${query ? `?${query}` : ""}`);
 }
 
 export async function fetchActivityLogSummary() {
   return httpRequest<{ summary: ActivityLogSummary }>("/api/logs/summary");
 }
 
-export async function fetchLibraryItems(limit = 300) {
-  return httpRequest<{ items: LibraryImageItem[] }>(`/api/library?limit=${limit}`);
+export async function fetchLibraryItems(params: { limit?: number; offset?: number; q?: string; mode?: string } = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") {
+      search.set(key, String(value));
+    }
+  });
+  const query = search.toString();
+  return httpRequest<PaginatedResponse<LibraryImageItem>>(`/api/library${query ? `?${query}` : ""}`);
 }

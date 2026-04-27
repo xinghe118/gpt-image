@@ -1,4 +1,3 @@
-import base64
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,7 +36,7 @@ class ImageLibraryServiceTests(unittest.TestCase):
         self.addCleanup(self.config_patcher.stop)
 
     def test_records_images_as_urls_without_returning_base64_in_list(self):
-        image_data = base64.b64encode(b"fake-png").decode("ascii")
+        image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
         self.service.record_images(
             identity={"id": "user-1", "name": "User", "role": "user"},
             prompt="hello",
@@ -47,12 +46,15 @@ class ImageLibraryServiceTests(unittest.TestCase):
             images=[{"b64_json": image_data}],
         )
 
-        items = self.service.list_images(identity={"id": "user-1", "role": "user"})
+        result = self.service.list_images(identity={"id": "user-1", "role": "user"})
+        items = result["items"]
 
         self.assertEqual(len(items), 1)
         self.assertIn("image_url", items[0])
+        self.assertIn("thumb_url", items[0])
         self.assertNotIn("b64_json", items[0])
         self.assertTrue((Path(self.temp_dir.name) / items[0]["image_url"].removeprefix("/images/")).exists())
+        self.assertTrue((Path(self.temp_dir.name) / items[0]["thumb_url"].removeprefix("/images/")).exists())
 
 
 if __name__ == "__main__":

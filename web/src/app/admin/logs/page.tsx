@@ -32,22 +32,29 @@ function LogsPageContent() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const pageSize = 100;
 
-  const loadLogs = async (silent = false) => {
-    if (!silent) {
+  const loadLogs = async ({ silent = false, append = false, statusOverride }: { silent?: boolean; append?: boolean; statusOverride?: string } = {}) => {
+    if (append) {
+      setIsLoadingMore(true);
+    } else if (!silent) {
       setIsLoading(true);
     }
     try {
       const [logsData, summaryData] = await Promise.all([
-        fetchActivityLogs({ limit: 300, status, q: query.trim() }),
+        fetchActivityLogs({ limit: pageSize, offset: append ? items.length : 0, status: statusOverride ?? status, q: query.trim() }),
         fetchActivityLogSummary(),
       ]);
-      setItems(logsData.items);
+      setItems((current) => (append ? [...current, ...logsData.items] : logsData.items));
+      setHasMore(logsData.has_more);
       setSummary(summaryData.summary);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "加载日志失败");
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
   };
 
@@ -81,7 +88,7 @@ function LogsPageContent() {
             <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">日志中心</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">查看 API 调用、失败原因、耗时和用户访问痕迹，敏感内容已摘要化。</p>
           </div>
-          <Button className="h-10 rounded-lg bg-slate-950 text-white hover:bg-slate-800" onClick={() => void loadLogs(true)}>
+          <Button className="h-10 rounded-lg bg-slate-950 text-white hover:bg-slate-800" onClick={() => void loadLogs({ silent: true })}>
             <RefreshCw className="size-4" />
             刷新
           </Button>
@@ -106,7 +113,7 @@ function LogsPageContent() {
               className="h-10 rounded-lg border-slate-200 pl-9"
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
-                  void loadLogs(true);
+                  void loadLogs({ silent: true });
                 }
               }}
             />
@@ -121,7 +128,10 @@ function LogsPageContent() {
               <button
                 key={value}
                 type="button"
-                onClick={() => setStatus(value)}
+                onClick={() => {
+                  setStatus(value);
+                  void loadLogs({ silent: true, statusOverride: value });
+                }}
                 className={cn(
                   "h-10 rounded-lg px-3 text-sm font-medium transition",
                   status === value ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200",
@@ -131,7 +141,7 @@ function LogsPageContent() {
               </button>
             ))}
           </div>
-          <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" onClick={() => void loadLogs(true)}>
+          <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" onClick={() => void loadLogs({ silent: true })}>
             应用筛选
           </Button>
         </div>
@@ -179,6 +189,14 @@ function LogsPageContent() {
             )}
           </div>
         </div>
+        {hasMore ? (
+          <div className="mt-4 flex justify-center">
+            <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" disabled={isLoadingMore} onClick={() => void loadLogs({ append: true, silent: true })}>
+              {isLoadingMore ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              加载更多
+            </Button>
+          </div>
+        ) : null}
       </div>
     </section>
   );

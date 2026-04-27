@@ -17,6 +17,10 @@ function imageSrc(item: LibraryImageItem) {
   return `data:image/png;base64,${item.b64_json}`;
 }
 
+function previewSrc(item: LibraryImageItem) {
+  return item.thumb_url || imageSrc(item);
+}
+
 function formatTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -38,16 +42,30 @@ export default function LibraryPage() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState("");
   const [selectedItem, setSelectedItem] = useState<LibraryImageItem | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const pageSize = 48;
 
-  const loadItems = async () => {
-    setIsLoading(true);
+  const loadItems = async ({ append = false, modeOverride }: { append?: boolean; modeOverride?: string } = {}) => {
+    if (append) {
+      setIsLoadingMore(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
-      const data = await fetchLibraryItems(500);
-      setItems(data.items);
+      const data = await fetchLibraryItems({
+        limit: pageSize,
+        offset: append ? items.length : 0,
+        q: query.trim(),
+        mode: modeOverride ?? mode,
+      });
+      setItems((current) => (append ? [...current, ...data.items] : data.items));
+      setHasMore(data.has_more);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "读取作品库失败");
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
   };
 
@@ -60,17 +78,10 @@ export default function LibraryPage() {
   }, [isCheckingAuth, session]);
 
   const filteredItems = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
     return items.filter((item) => {
-      if (mode && item.mode !== mode) {
-        return false;
-      }
-      if (!normalizedQuery) {
-        return true;
-      }
-      return [item.prompt, item.model, item.size, item.subject_name].join(" ").toLowerCase().includes(normalizedQuery);
+      return !mode || item.mode === mode;
     });
-  }, [items, mode, query]);
+  }, [items, mode]);
 
   const downloadImage = (item: LibraryImageItem) => {
     const link = document.createElement("a");
@@ -118,7 +129,7 @@ export default function LibraryPage() {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <Input
@@ -126,6 +137,11 @@ export default function LibraryPage() {
               onChange={(event) => setQuery(event.target.value)}
               placeholder="搜索提示词、用户、模型或比例"
               className="h-10 rounded-lg border-slate-200 pl-9"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void loadItems();
+                }
+              }}
             />
           </div>
           <div className="flex gap-2">
@@ -137,7 +153,10 @@ export default function LibraryPage() {
               <button
                 key={value}
                 type="button"
-                onClick={() => setMode(value)}
+                onClick={() => {
+                  setMode(value);
+                  void loadItems({ modeOverride: value });
+                }}
                 className={cn(
                   "h-10 rounded-lg px-3 text-sm font-medium transition",
                   mode === value ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200",
@@ -147,6 +166,9 @@ export default function LibraryPage() {
               </button>
             ))}
           </div>
+          <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" onClick={() => void loadItems()}>
+            应用筛选
+          </Button>
         </div>
       </div>
 
@@ -167,7 +189,7 @@ export default function LibraryPage() {
           {filteredItems.map((item) => (
             <article key={item.id} className="break-inside-avoid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <button type="button" className="group block w-full cursor-zoom-in bg-slate-100" onClick={() => setSelectedItem(item)}>
-                <img src={imageSrc(item)} alt={item.prompt} className="h-auto w-full transition group-hover:brightness-95" />
+                <img src={previewSrc(item)} alt={item.prompt} loading="lazy" className="h-auto w-full transition group-hover:brightness-95" />
               </button>
               <div className="space-y-3 p-4">
                 <div className="line-clamp-2 text-sm font-medium leading-6 text-slate-900">{item.prompt}</div>
@@ -183,6 +205,15 @@ export default function LibraryPage() {
           ))}
         </div>
       )}
+
+      {!isLoading && hasMore ? (
+        <div className="flex justify-center">
+          <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" disabled={isLoadingMore} onClick={() => void loadItems({ append: true })}>
+            {isLoadingMore ? <LoaderCircle className="size-4 animate-spin" /> : null}
+            加载更多
+          </Button>
+        </div>
+      ) : null}
 
       {selectedItem ? (
         <div className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm" onClick={() => setSelectedItem(null)}>

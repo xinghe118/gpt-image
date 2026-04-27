@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
+
+from PIL import Image
 
 from services.app_data_store import app_data_store
 from services.config import config
@@ -41,6 +44,14 @@ class ImageLibraryService:
     def _image_path(record_id: str) -> Path:
         return config.images_dir / "library" / f"{record_id}.png"
 
+    @staticmethod
+    def _thumb_url(record_id: str) -> str:
+        return f"/images/library/thumbs/{record_id}.webp"
+
+    @staticmethod
+    def _thumb_path(record_id: str) -> Path:
+        return config.images_dir / "library" / "thumbs" / f"{record_id}.webp"
+
     def _decode_image(self, b64_json: str) -> bytes:
         value = self._clean(b64_json)
         if value.startswith("data:"):
@@ -57,9 +68,24 @@ class ImageLibraryService:
         path.write_bytes(image_data)
         return self._image_url(record_id)
 
+    def _persist_thumb(self, record_id: str, b64_json: str) -> str:
+        image_data = self._decode_image(b64_json)
+        path = self._thumb_path(record_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with Image.open(io.BytesIO(image_data)) as image:
+                image.thumbnail((640, 640))
+                if image.mode not in {"RGB", "RGBA"}:
+                    image = image.convert("RGB")
+                image.save(path, format="WEBP", quality=78, method=4)
+        except Exception as exc:
+            raise ValueError("invalid image data") from exc
+        return self._thumb_url(record_id)
+
     def _public_item(self, item: dict[str, Any]) -> dict[str, Any]:
         public_item = {key: value for key, value in item.items() if key != "b64_json"}
         public_item["image_url"] = self._clean(public_item.get("image_url")) or self._image_url(self._clean(item.get("id")))
+        public_item["thumb_url"] = self._clean(public_item.get("thumb_url")) or self._clean(public_item.get("image_url"))
         return public_item
 
     def _materialize_legacy_images(self, items: list[dict[str, Any]]) -> bool:
@@ -71,6 +97,7 @@ class ImageLibraryService:
                 continue
             try:
                 item["image_url"] = self._persist_image(record_id, b64_json)
+                item["thumb_url"] = self._persist_thumb(record_id, b64_json)
             except ValueError:
                 continue
             item.pop("b64_json", None)
@@ -99,6 +126,7 @@ class ImageLibraryService:
             record_id = uuid.uuid4().hex
             try:
                 image_url = self._persist_image(record_id, b64_json)
+                thumb_url = self._persist_thumb(record_id, b64_json)
             except ValueError:
                 continue
             records.append(
@@ -114,6 +142,7 @@ class ImageLibraryService:
                     "created_at": created_at,
                     "index": index,
                     "image_url": image_url,
+                    "thumb_url": thumb_url,
                     "revised_prompt": self._clean(image.get("revised_prompt") if isinstance(image, dict) else ""),
                 }
             )
@@ -124,16 +153,51 @@ class ImageLibraryService:
             self._save([*records, *items])
         return records
 
-    def list_images(self, *, identity: dict[str, object], limit: int = 300) -> list[dict[str, Any]]:
+    def list_images(
+        self,
+        *,
+        identity: dict[str, object],
+        limit: int = 300,
+        offset: int = 0,
+        query: str = "",
+        mode: str = "",
+    ) -> dict[str, Any]:
         subject_id = self._clean(identity.get("id"))
         is_admin = identity.get("role") == "admin"
+        limit = max(1, min(100, int(limit or 48)))
+        offset = max(0, int(offset or 0))
+        normalized_query = self._clean(query).lower()
+        normalized_mode = self._clean(mode).lower()
         with self._lock:
             items = self._load()
             visible_items = items if is_admin else [item for item in items if self._clean(item.get("subject_id")) == subject_id]
-            limited_items = visible_items[: max(1, min(1000, int(limit or 300)))]
+            if normalized_mode:
+                visible_items = [item for item in visible_items if self._clean(item.get("mode")).lower() == normalized_mode]
+            if normalized_query:
+                visible_items = [
+                    item
+                    for item in visible_items
+                    if normalized_query
+                    in " ".join(
+                        [
+                            self._clean(item.get("prompt")),
+                            self._clean(item.get("model")),
+                            self._clean(item.get("size")),
+                            self._clean(item.get("subject_name")),
+                        ]
+                    ).lower()
+                ]
+            total = len(visible_items)
+            limited_items = visible_items[offset: offset + limit]
             if self._materialize_legacy_images(limited_items):
                 self._save(items)
-        return [self._public_item(item) for item in limited_items]
+        return {
+            "items": [self._public_item(item) for item in limited_items],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total,
+        }
 
 
 image_library_service = ImageLibraryService()

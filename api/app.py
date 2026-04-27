@@ -18,6 +18,13 @@ from services.chatgpt_service import ChatGPTService
 from services.config import config
 
 
+class CacheControlStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Cache-Control", "public, max-age=604800, immutable")
+        return response
+
+
 def create_app() -> FastAPI:
     chatgpt_service = ChatGPTService(account_service)
     app_version = config.app_version
@@ -58,13 +65,16 @@ def create_app() -> FastAPI:
         )
 
     if config.images_dir.exists():
-        app.mount("/images", StaticFiles(directory=str(config.images_dir)), name="images")
+        app.mount("/images", CacheControlStaticFiles(directory=str(config.images_dir)), name="images")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_web(full_path: str):
         asset = resolve_web_asset(full_path)
         if asset is not None:
-            headers = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+            if full_path.strip("/").startswith("_next/static/"):
+                headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+            else:
+                headers = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
             return FileResponse(asset, headers=headers)
         if full_path.strip("/").startswith("_next/"):
             raise HTTPException(status_code=404, detail="Not Found")

@@ -132,22 +132,22 @@ def create_router(app_version: str) -> APIRouter:
     @router.get("/api/logs")
     async def list_activity_logs(
             authorization: str | None = Header(default=None),
-            limit: int = Query(default=200, ge=1, le=1000),
+            limit: int = Query(default=100, ge=1, le=500),
+            offset: int = Query(default=0, ge=0),
             level: str = "",
             status: str = "",
             event: str = "",
             q: str = "",
     ):
         require_admin(authorization)
-        return {
-            "items": activity_log_service.list_logs(
-                limit=limit,
-                level=level,
-                status=status,
-                event=event,
-                query=q,
-            )
-        }
+        return activity_log_service.list_logs(
+            limit=limit,
+            offset=offset,
+            level=level,
+            status=status,
+            event=event,
+            query=q,
+        )
 
     @router.get("/api/logs/summary")
     async def get_activity_log_summary(authorization: str | None = Header(default=None)):
@@ -157,10 +157,13 @@ def create_router(app_version: str) -> APIRouter:
     @router.get("/api/library")
     async def list_library_items(
             authorization: str | None = Header(default=None),
-            limit: int = Query(default=300, ge=1, le=1000),
+            limit: int = Query(default=48, ge=1, le=100),
+            offset: int = Query(default=0, ge=0),
+            q: str = "",
+            mode: str = "",
     ):
         identity = require_identity(authorization)
-        return {"items": image_library_service.list_images(identity=identity, limit=limit)}
+        return image_library_service.list_images(identity=identity, limit=limit, offset=offset, query=q, mode=mode)
 
     return router
 

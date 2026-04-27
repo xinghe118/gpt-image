@@ -57,19 +57,22 @@ class ActivityLogService:
         self,
         *,
         limit: int = 200,
+        offset: int = 0,
         level: str = "",
         status: str = "",
         event: str = "",
         query: str = "",
-    ) -> list[dict[str, Any]]:
-        limit = max(1, min(int(limit or 200), 1000))
+    ) -> dict[str, Any]:
+        limit = max(1, min(int(limit or 100), 500))
+        offset = max(0, int(offset or 0))
         level = level.strip().lower()
         status = status.strip().lower()
         event = event.strip().lower()
         query = query.strip().lower()
         items: list[dict[str, Any]] = []
         with self._lock:
-            raw_items = app_data_store.list_activity_logs(limit=1000)
+            raw_items = app_data_store.list_activity_logs(limit=max(1000, offset + limit + 1))
+        matched = 0
         for item in raw_items:
             if level and str(item.get("level") or "").lower() != level:
                 continue
@@ -81,13 +84,20 @@ class ActivityLogService:
                 haystack = str(item).lower()
                 if query not in haystack:
                     continue
-            items.append(item)
-            if len(items) >= limit:
+            if matched >= offset and len(items) < limit:
+                items.append(item)
+            matched += 1
+            if matched > offset + limit:
                 break
-        return items
+        return {
+            "items": items,
+            "limit": limit,
+            "offset": offset,
+            "has_more": matched > offset + len(items),
+        }
 
     def summary(self) -> dict[str, Any]:
-        logs = self.list_logs(limit=1000)
+        logs = self.list_logs(limit=1000)["items"]
         total = len(logs)
         failures = sum(1 for item in logs if str(item.get("status") or "").lower() != "ok")
         by_event: dict[str, int] = {}

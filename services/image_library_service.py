@@ -215,5 +215,35 @@ class ImageLibraryService:
             "has_more": offset + limit < total,
         }
 
+    def move_image_to_project(
+        self,
+        *,
+        identity: dict[str, object],
+        image_id: str,
+        project_id: str,
+    ) -> dict[str, Any] | None:
+        record_id = self._clean(image_id)
+        subject_id = self._clean(identity.get("id"))
+        is_admin = identity.get("role") == "admin"
+        project = project_service.touch_project(identity, project_id)
+        normalized_project_id = self._clean(project.get("id")) or project_service.DEFAULT_PROJECT_ID
+        project_name = self._clean(project.get("name")) or "默认项目"
+        with self._lock:
+            items = self._load()
+            updated: dict[str, Any] | None = None
+            for item in items:
+                if self._clean(item.get("id")) != record_id:
+                    continue
+                if not is_admin and self._clean(item.get("subject_id")) != subject_id:
+                    raise PermissionError("image permission denied")
+                item["project_id"] = normalized_project_id
+                item["project_name"] = project_name
+                updated = self._public_item(item)
+                break
+            if updated is None:
+                return None
+            self._save(items)
+            return updated
+
 
 image_library_service = ImageLibraryService()

@@ -6,7 +6,13 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { fetchLibraryItems, fetchProjects, type LibraryImageItem, type ProjectItem } from "@/lib/api";
+import {
+  fetchLibraryItems,
+  fetchProjects,
+  moveLibraryItemToProject,
+  type LibraryImageItem,
+  type ProjectItem,
+} from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +52,8 @@ export default function LibraryPage() {
   const [selectedItem, setSelectedItem] = useState<LibraryImageItem | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectId, setProjectId] = useState("");
+  const [moveProjectId, setMoveProjectId] = useState("");
+  const [isMovingProject, setIsMovingProject] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const pageSize = 48;
@@ -84,6 +92,10 @@ export default function LibraryPage() {
       .catch(() => undefined);
     void loadItems();
   }, [isCheckingAuth, session]);
+
+  useEffect(() => {
+    setMoveProjectId(selectedItem?.project_id || "default");
+  }, [selectedItem?.id, selectedItem?.project_id]);
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
@@ -128,6 +140,24 @@ export default function LibraryPage() {
       window.location.href = "/image/";
     } catch {
       toast.error("无法加入工作台，请下载后手动上传参考图");
+    }
+  };
+
+  const moveSelectedItem = async () => {
+    if (!selectedItem || !moveProjectId) {
+      toast.error("请选择目标项目");
+      return;
+    }
+    setIsMovingProject(true);
+    try {
+      const data = await moveLibraryItemToProject(selectedItem.id, moveProjectId);
+      setSelectedItem(data.item);
+      setItems((current) => current.map((item) => (item.id === data.item.id ? data.item : item)));
+      toast.success("作品已移动到项目");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "移动作品失败");
+    } finally {
+      setIsMovingProject(false);
     }
   };
 
@@ -288,6 +318,31 @@ export default function LibraryPage() {
                   <Info label="比例" value={selectedItem.size || "未指定"} />
                   <Info label="项目" value={selectedItem.project_name || "默认项目"} />
                   <Info label="用户" value={selectedItem.subject_name || selectedItem.subject_id} />
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <div className="mb-2 text-xs font-semibold uppercase text-slate-400">移动到项目</div>
+                  <div className="flex gap-2">
+                    <select
+                      value={moveProjectId || selectedItem.project_id || "default"}
+                      onChange={(event) => setMoveProjectId(event.target.value)}
+                      className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-cyan-300"
+                    >
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      variant="outline"
+                      className="h-10 rounded-lg border-slate-200 bg-white"
+                      onClick={() => void moveSelectedItem()}
+                      disabled={isMovingProject}
+                    >
+                      {isMovingProject ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                      移动
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

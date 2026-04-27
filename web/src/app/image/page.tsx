@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
+  archiveProject,
   createImageEditJob,
   createImageGenerationJob,
   createProject,
@@ -24,6 +25,7 @@ import {
   fetchImageJob,
   fetchProjects,
   fetchUIConfig,
+  updateProject,
   type Account,
   type CurrentIdentity,
   type GeneratedImageData,
@@ -478,7 +480,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("default");
   const [newProjectName, setNewProjectName] = useState("");
+  const [projectNameDraft, setProjectNameDraft] = useState("");
+  const [projectDescriptionDraft, setProjectDescriptionDraft] = useState("");
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [isSavingProject, setIsSavingProject] = useState(false);
 
   const parsedCount = useMemo(() => Math.max(1, Math.min(10, Number(imageCount) || 1)), [imageCount]);
   const projectConversations = useMemo(
@@ -492,6 +497,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
     [activeProjectId, projects],
+  );
+  const activeProjectImageCount = useMemo(
+    () =>
+      projectConversations.reduce(
+        (total, conversation) =>
+          total + conversation.turns.reduce((turnTotal, turn) => turnTotal + (turn.images?.length || 0), 0),
+        0,
+      ),
+    [projectConversations],
   );
   const taskSummary = useMemo(
     () =>
@@ -782,6 +796,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   }, [activeProjectId]);
 
   useEffect(() => {
+    setProjectNameDraft(activeProject?.is_default ? "" : activeProject?.name || "");
+    setProjectDescriptionDraft(activeProject?.is_default ? "" : activeProject?.description || "");
+  }, [activeProject?.description, activeProject?.id, activeProject?.is_default, activeProject?.name]);
+
+  useEffect(() => {
     if (!selectedConversation) {
       return;
     }
@@ -854,6 +873,49 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       toast.error(error instanceof Error ? error.message : "创建项目失败");
     } finally {
       setIsCreatingProject(false);
+    }
+  };
+
+  const handleRenameProject = async () => {
+    if (!activeProject || activeProject.is_default) {
+      return;
+    }
+    const name = projectNameDraft.trim();
+    if (!name) {
+      toast.error("项目名称不能为空");
+      return;
+    }
+    setIsSavingProject(true);
+    try {
+      const data = await updateProject(activeProject.id, {
+        name,
+        description: projectDescriptionDraft.trim(),
+      });
+      setProjects(data.items);
+      toast.success("项目已保存");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存项目失败");
+    } finally {
+      setIsSavingProject(false);
+    }
+  };
+
+  const handleArchiveProject = async () => {
+    if (!activeProject || activeProject.is_default) {
+      return;
+    }
+    setIsSavingProject(true);
+    try {
+      const data = await archiveProject(activeProject.id);
+      setProjects(data.items);
+      const nextProjectId = data.items[0]?.id || "default";
+      setActiveProjectId(nextProjectId);
+      setSelectedConversationId(null);
+      toast.success("项目已归档");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "归档项目失败");
+    } finally {
+      setIsSavingProject(false);
     }
   };
 
@@ -1431,10 +1493,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       <section className="grid h-[calc(100vh-5.75rem)] min-h-[680px] grid-cols-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_320px]">
         <div className="hidden h-full min-h-0 border-r border-slate-200 bg-slate-50/80 p-3 lg:block">
           <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-            <label className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              <FolderKanban className="size-4" />
-              项目空间
-            </label>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <FolderKanban className="size-4" />
+                项目空间
+              </label>
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500">
+                {projectConversations.length} 会话 / {activeProjectImageCount} 图
+              </span>
+            </div>
             <select
               value={activeProjectId}
               onChange={(event) => {
@@ -1470,39 +1537,47 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                 {isCreatingProject ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
               </Button>
             </div>
-            <div className="mt-3 grid gap-2 lg:hidden">
-              <select
-                value={activeProjectId}
-                onChange={(event) => {
-                  setActiveProjectId(event.target.value);
-                  setSelectedConversationId(null);
-                  resetComposer();
-                }}
-                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-cyan-300"
-              >
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-              <div className="flex gap-2">
-                <input
-                  value={newProjectName}
-                  onChange={(event) => setNewProjectName(event.target.value)}
-                  placeholder="新项目名称"
-                  className="h-10 min-w-0 flex-1 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-cyan-300"
-                />
-                <Button
-                  className="h-10 rounded-xl bg-slate-950 text-white hover:bg-slate-800"
-                  onClick={() => void handleCreateProject()}
-                  disabled={isCreatingProject}
-                >
-                  {isCreatingProject ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
-                  项目
-                </Button>
+            {!activeProject?.is_default ? (
+              <div className="mt-3 space-y-2 rounded-xl bg-slate-50 p-3">
+                <div className="text-xs font-medium text-slate-500">当前项目管理</div>
+                <div className="grid gap-2">
+                  <input
+                    value={projectNameDraft}
+                    onChange={(event) => setProjectNameDraft(event.target.value)}
+                    placeholder="项目名称"
+                    className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-cyan-300"
+                  />
+                  <textarea
+                    value={projectDescriptionDraft}
+                    onChange={(event) => setProjectDescriptionDraft(event.target.value)}
+                    placeholder="项目说明，例如客户、用途、版本目标"
+                    rows={2}
+                    className="min-h-[64px] resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-cyan-300"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="h-9 flex-1 rounded-lg border-slate-200 bg-white px-3"
+                    onClick={() => void handleRenameProject()}
+                    disabled={isSavingProject}
+                  >
+                    {isSavingProject ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                    <Save className="size-4" />
+                    保存
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-9 flex-1 rounded-lg border-rose-200 bg-white px-3 text-rose-600 hover:bg-rose-50"
+                    onClick={() => void handleArchiveProject()}
+                    disabled={isSavingProject}
+                  >
+                    <Trash2 className="size-4" />
+                    归档
+                  </Button>
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
           <ImageSidebar
             conversations={projectConversations}
@@ -1731,6 +1806,39 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   disabled={conversations.length === 0}
                 >
                   <Trash2 className="size-4" />
+                </Button>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 lg:hidden">
+              <select
+                value={activeProjectId}
+                onChange={(event) => {
+                  setActiveProjectId(event.target.value);
+                  setSelectedConversationId(null);
+                  resetComposer();
+                }}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-cyan-300"
+              >
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <input
+                  value={newProjectName}
+                  onChange={(event) => setNewProjectName(event.target.value)}
+                  placeholder="新项目名称"
+                  className="h-10 min-w-0 flex-1 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-cyan-300"
+                />
+                <Button
+                  className="h-10 rounded-xl bg-slate-950 text-white hover:bg-slate-800"
+                  onClick={() => void handleCreateProject()}
+                  disabled={isCreatingProject}
+                >
+                  {isCreatingProject ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                  项目
                 </Button>
               </div>
             </div>

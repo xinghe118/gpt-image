@@ -113,6 +113,46 @@ class ProjectService:
             self._save([item, *items])
         return self._public_item(item)
 
+    def update_project(
+        self,
+        identity: dict[str, object],
+        project_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        archived: bool | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_id = self._clean(project_id)
+        if not normalized_id or normalized_id == self.DEFAULT_PROJECT_ID:
+            raise ValueError("default project cannot be modified")
+        subject_id = self._clean(identity.get("id"))
+        is_admin = identity.get("role") == "admin"
+        now = _now_iso()
+        with self._lock:
+            items = self._load()
+            updated: dict[str, Any] | None = None
+            for item in items:
+                if self._clean(item.get("id")) != normalized_id:
+                    continue
+                if not is_admin and self._clean(item.get("subject_id")) != subject_id:
+                    raise PermissionError("project permission denied")
+                if name is not None:
+                    clean_name = self._clean(name)
+                    if not clean_name:
+                        raise ValueError("project name is required")
+                    item["name"] = clean_name[:80]
+                if description is not None:
+                    item["description"] = self._clean(description)[:300]
+                if archived is not None:
+                    item["archived"] = bool(archived)
+                item["updated_at"] = now
+                updated = self._public_item(item)
+                break
+            if updated is None:
+                return None
+            self._save(items)
+            return updated
+
     def touch_project(self, identity: dict[str, object], project_id: str | None) -> dict[str, Any]:
         normalized_id = self._clean(project_id)
         project = self.ensure_project(identity, normalized_id)

@@ -12,6 +12,12 @@ class ProjectCreateRequest(BaseModel):
     description: str = ""
 
 
+class ProjectUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    archived: bool | None = None
+
+
 def create_router() -> APIRouter:
     router = APIRouter()
 
@@ -27,6 +33,42 @@ def create_router() -> APIRouter:
             item = project_service.create_project(identity, body.name, body.description)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        return {"item": item, "items": project_service.list_projects(identity)}
+
+    @router.post("/api/projects/{project_id}")
+    async def update_project(
+        project_id: str,
+        body: ProjectUpdateRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        identity = require_identity(authorization)
+        try:
+            item = project_service.update_project(
+                identity,
+                project_id,
+                name=body.name,
+                description=body.description,
+                archived=body.archived,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail={"error": "project not found"})
+        return {"item": item, "items": project_service.list_projects(identity)}
+
+    @router.delete("/api/projects/{project_id}")
+    async def archive_project(project_id: str, authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        try:
+            item = project_service.update_project(identity, project_id, archived=True)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail={"error": "project not found"})
         return {"item": item, "items": project_service.list_projects(identity)}
 
     return router

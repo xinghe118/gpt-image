@@ -18,6 +18,10 @@ class SettingsUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class LibraryMoveProjectRequest(BaseModel):
+    project_id: str = ""
+
+
 class ProxyTestRequest(BaseModel):
     url: str = ""
 
@@ -172,6 +176,25 @@ def create_router(app_version: str) -> APIRouter:
             mode=mode,
             project_id=project_id,
         )
+
+    @router.post("/api/library/{image_id}/project")
+    async def move_library_item_project(
+            image_id: str,
+            body: LibraryMoveProjectRequest,
+            authorization: str | None = Header(default=None),
+    ):
+        identity = require_identity(authorization)
+        try:
+            item = image_library_service.move_image_to_project(
+                identity=identity,
+                image_id=image_id,
+                project_id=body.project_id,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail={"error": "image not found"})
+        return {"item": item}
 
     return router
 

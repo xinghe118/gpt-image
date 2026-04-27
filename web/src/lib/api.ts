@@ -653,6 +653,29 @@ export async function createProject(project: { name: string; description?: strin
   });
 }
 
+export async function updateProject(
+  projectId: string,
+  updates: { name?: string; description?: string; archived?: boolean },
+) {
+  return httpRequest<{ item: ProjectItem; items: ProjectItem[] }>(`/api/projects/${projectId}`, {
+    method: "POST",
+    body: updates,
+  });
+}
+
+export async function archiveProject(projectId: string) {
+  return httpRequest<{ item: ProjectItem; items: ProjectItem[] }>(`/api/projects/${projectId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function moveLibraryItemToProject(imageId: string, projectId: string) {
+  return httpRequest<{ item: LibraryImageItem }>(`/api/library/${imageId}/project`, {
+    method: "POST",
+    body: { project_id: projectId },
+  });
+}
+
 export async function fetchLibraryItems(params: { limit?: number; offset?: number; q?: string; mode?: string; project_id?: string } = {}) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {

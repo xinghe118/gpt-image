@@ -51,7 +51,12 @@ export default function LibraryPage() {
   const [mode, setMode] = useState("");
   const [selectedItem, setSelectedItem] = useState<LibraryImageItem | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return new URLSearchParams(window.location.search).get("project_id") || "";
+  });
   const [moveProjectId, setMoveProjectId] = useState("");
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [hasMore, setHasMore] = useState(false);

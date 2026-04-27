@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { FileText, Images, ImageIcon, LayoutDashboard, LogOut, Settings, UsersRound } from "lucide-react";
+import { FileText, FolderKanban, Images, ImageIcon, LayoutDashboard, LogOut, Settings, UsersRound } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
 import webConfig from "@/constants/common-env";
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 
 const adminNavItems = [
   { href: "/image", label: "工作台", icon: ImageIcon },
+  { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/library", label: "作品库", icon: Images },
   { href: "/admin", label: "概览", icon: LayoutDashboard },
   { href: "/admin/logs", label: "日志", icon: FileText },
@@ -20,6 +21,7 @@ const adminNavItems = [
 
 const userNavItems = [
   { href: "/image", label: "工作台", icon: ImageIcon },
+  { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/library", label: "作品库", icon: Images },
 ];
 

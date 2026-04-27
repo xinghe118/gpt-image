@@ -21,13 +21,10 @@ class ConversationService:
         return str(value or "").strip()
 
     def _load(self) -> list[dict[str, Any]]:
-        data = app_data_store.load_document("conversations", {"items": []})
-        if isinstance(data, dict):
-            data = data.get("items")
-        return data if isinstance(data, list) else []
+        return app_data_store.load_conversations()
 
     def _save(self, items: list[dict[str, Any]]) -> None:
-        app_data_store.save_document("conversations", {"items": items})
+        app_data_store.save_conversations(items)
 
     def _public_item(self, item: dict[str, Any]) -> dict[str, Any]:
         project_id = self._clean(item.get("project_id") or item.get("projectId")) or project_service.DEFAULT_PROJECT_ID

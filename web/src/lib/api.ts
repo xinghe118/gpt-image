@@ -139,6 +139,10 @@ export type ProjectItem = {
   updated_at: string;
   archived: boolean;
   is_default?: boolean;
+  image_count?: number;
+  conversation_count?: number;
+  last_activity_at?: string;
+  cover_url?: string;
 };
 
 export async function login(authKey: string) {

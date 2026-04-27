@@ -23,13 +23,10 @@ class ProjectService:
         return str(value or "").strip()
 
     def _load(self) -> list[dict[str, Any]]:
-        data = app_data_store.load_document("projects", {"items": []})
-        if isinstance(data, dict):
-            data = data.get("items")
-        return data if isinstance(data, list) else []
+        return app_data_store.load_projects()
 
     def _save(self, items: list[dict[str, Any]]) -> None:
-        app_data_store.save_document("projects", {"items": items})
+        app_data_store.save_projects(items)
 
     def default_project(self, identity: dict[str, object]) -> dict[str, Any]:
         subject_id = self._clean(identity.get("id")) or "anonymous"
@@ -47,6 +44,8 @@ class ProjectService:
         }
 
     def _public_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        image_count = item.get("image_count")
+        conversation_count = item.get("conversation_count")
         return {
             "id": self._clean(item.get("id")) or self.DEFAULT_PROJECT_ID,
             "subject_id": self._clean(item.get("subject_id")),
@@ -57,6 +56,10 @@ class ProjectService:
             "updated_at": self._clean(item.get("updated_at")),
             "archived": bool(item.get("archived")),
             "is_default": bool(item.get("is_default")),
+            "image_count": int(image_count) if isinstance(image_count, int) else 0,
+            "conversation_count": int(conversation_count) if isinstance(conversation_count, int) else 0,
+            "last_activity_at": self._clean(item.get("last_activity_at")),
+            "cover_url": self._clean(item.get("cover_url")),
         }
 
     def ensure_project(self, identity: dict[str, object], project_id: str | None = None) -> dict[str, Any]:
@@ -83,12 +86,14 @@ class ProjectService:
         visible = items if is_admin else [item for item in items if self._clean(item.get("subject_id")) == subject_id]
         default = self.default_project(identity)
         result = [default, *[self._public_item(item) for item in visible if not bool(item.get("archived"))]]
+        stats = app_data_store.project_stats(subject_id=subject_id, include_all=is_admin)
         seen: set[str] = set()
         unique: list[dict[str, Any]] = []
         for item in result:
             project_id = self._clean(item.get("id"))
             if project_id and project_id not in seen:
                 seen.add(project_id)
+                item.update(stats.get(project_id, {}))
                 unique.append(item)
         return sorted(unique, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 

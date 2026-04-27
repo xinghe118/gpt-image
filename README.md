@@ -26,6 +26,7 @@
 | --- | --- |
 | `/login/` | 密钥登录页 |
 | `/image/` | 用户端图片工作台 |
+| `/projects/` | 项目总览 |
 | `/library/` | 作品库 |
 | `/admin/` | 管理员概览 |
 | `/admin/logs/` | 日志中心 |
@@ -157,8 +158,12 @@ environment:
 
 - `accounts`：账号池数据
 - `auth_keys`：普通用户密钥和额度数据
+- `projects`：项目空间数据
+- `conversations`：多设备同步的图片对话数据
+- `image_library`：作品库索引、项目归属和缩略图信息
+- `activity_logs`：API 调用和异常日志
 
-如果你已经有本地 JSON 数据，迁移思路是：先保留 `data/accounts.json` 和 `data/auth_keys.json`，启动一段一次性迁移脚本把它们写入 PostgreSQL。后续可以在管理后台增加“一键迁移”按钮。
+如果你已经有本地 JSON 数据，可以在系统设置里的存储模块执行“一键迁移”，会把账号、用户密钥、项目、对话、作品库和日志写入 PostgreSQL。
 
 ## API 使用
 

@@ -29,13 +29,10 @@ class ImageLibraryService:
         return str(value or "").strip()
 
     def _load(self) -> list[dict[str, Any]]:
-        data = app_data_store.load_document("library", {"items": []})
-        if isinstance(data, dict):
-            data = data.get("items")
-        return data if isinstance(data, list) else []
+        return app_data_store.load_library()
 
     def _save(self, items: list[dict[str, Any]]) -> None:
-        app_data_store.save_document("library", {"items": items})
+        app_data_store.save_library(items)
 
     @staticmethod
     def _image_url(record_id: str) -> str:

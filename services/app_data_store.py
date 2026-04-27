@@ -34,6 +34,35 @@ class ActivityLogModel(Base):
     data = Column(Text, nullable=False)
 
 
+class ProjectDataModel(Base):
+    __tablename__ = "projects"
+
+    id = Column(String(80), primary_key=True)
+    subject_id = Column(String(120), nullable=False, index=True)
+    updated_at = Column(String(40), nullable=False, index=True)
+    data = Column(Text, nullable=False)
+
+
+class ConversationDataModel(Base):
+    __tablename__ = "conversations"
+
+    id = Column(String(80), primary_key=True)
+    subject_id = Column(String(120), nullable=False, index=True)
+    project_id = Column(String(80), nullable=False, index=True)
+    updated_at = Column(String(40), nullable=False, index=True)
+    data = Column(Text, nullable=False)
+
+
+class ImageLibraryDataModel(Base):
+    __tablename__ = "image_library"
+
+    id = Column(String(80), primary_key=True)
+    subject_id = Column(String(120), nullable=False, index=True)
+    project_id = Column(String(80), nullable=False, index=True)
+    created_at = Column(String(40), nullable=False, index=True)
+    data = Column(Text, nullable=False)
+
+
 def _database_url() -> str:
     configured = os.getenv("DATABASE_URL", "").strip()
     if configured:
@@ -115,6 +144,178 @@ class AppDataStore:
         finally:
             session.close()
 
+    @staticmethod
+    def _clean(value: object) -> str:
+        return str(value or "").strip()
+
+    @staticmethod
+    def _decode_row_data(rows: list[Any]) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                data = json.loads(row.data)
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                items.append(data)
+        return items
+
+    def _load_collection_document(self, key: str) -> list[dict[str, Any]]:
+        data = self.load_document(key, {"items": []})
+        if isinstance(data, dict):
+            data = data.get("items")
+        return data if isinstance(data, list) else []
+
+    def load_projects(self) -> list[dict[str, Any]]:
+        if not self._database_enabled:
+            return self._load_collection_document("projects")
+        session = self._session()
+        try:
+            rows = session.query(ProjectDataModel).order_by(ProjectDataModel.updated_at.desc()).all()
+            items = self._decode_row_data(rows)
+            return items if items else self._load_collection_document("projects")
+        finally:
+            session.close()
+
+    def save_projects(self, items: list[dict[str, Any]]) -> None:
+        if not self._database_enabled:
+            self.save_document("projects", {"items": items})
+            return
+        session = self._session()
+        try:
+            session.query(ProjectDataModel).delete()
+            for item in items:
+                item_id = self._clean(item.get("id"))
+                if not item_id:
+                    continue
+                session.add(
+                    ProjectDataModel(
+                        id=item_id,
+                        subject_id=self._clean(item.get("subject_id")) or "anonymous",
+                        updated_at=self._clean(item.get("updated_at")) or self._clean(item.get("created_at")),
+                        data=json.dumps(item, ensure_ascii=False),
+                    )
+                )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def load_conversations(self) -> list[dict[str, Any]]:
+        if not self._database_enabled:
+            return self._load_collection_document("conversations")
+        session = self._session()
+        try:
+            rows = session.query(ConversationDataModel).order_by(ConversationDataModel.updated_at.desc()).all()
+            items = self._decode_row_data(rows)
+            return items if items else self._load_collection_document("conversations")
+        finally:
+            session.close()
+
+    def save_conversations(self, items: list[dict[str, Any]]) -> None:
+        if not self._database_enabled:
+            self.save_document("conversations", {"items": items})
+            return
+        session = self._session()
+        try:
+            session.query(ConversationDataModel).delete()
+            for item in items:
+                item_id = self._clean(item.get("id"))
+                if not item_id:
+                    continue
+                session.add(
+                    ConversationDataModel(
+                        id=item_id,
+                        subject_id=self._clean(item.get("subject_id")) or "anonymous",
+                        project_id=self._clean(item.get("project_id") or item.get("projectId")) or "default",
+                        updated_at=self._clean(item.get("updatedAt") or item.get("updated_at") or item.get("createdAt")),
+                        data=json.dumps(item, ensure_ascii=False),
+                    )
+                )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def load_library(self) -> list[dict[str, Any]]:
+        if not self._database_enabled:
+            return self._load_collection_document("library")
+        session = self._session()
+        try:
+            rows = session.query(ImageLibraryDataModel).order_by(ImageLibraryDataModel.created_at.desc()).all()
+            items = self._decode_row_data(rows)
+            return items if items else self._load_collection_document("library")
+        finally:
+            session.close()
+
+    def save_library(self, items: list[dict[str, Any]]) -> None:
+        if not self._database_enabled:
+            self.save_document("library", {"items": items})
+            return
+        session = self._session()
+        try:
+            session.query(ImageLibraryDataModel).delete()
+            for item in items:
+                item_id = self._clean(item.get("id"))
+                if not item_id:
+                    continue
+                session.add(
+                    ImageLibraryDataModel(
+                        id=item_id,
+                        subject_id=self._clean(item.get("subject_id")) or "anonymous",
+                        project_id=self._clean(item.get("project_id")) or "default",
+                        created_at=self._clean(item.get("created_at")),
+                        data=json.dumps(item, ensure_ascii=False),
+                    )
+                )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def project_stats(self, *, subject_id: str = "", include_all: bool = False) -> dict[str, dict[str, Any]]:
+        stats: dict[str, dict[str, Any]] = {}
+
+        def bucket(project_id: str) -> dict[str, Any]:
+            normalized_id = self._clean(project_id) or "default"
+            return stats.setdefault(
+                normalized_id,
+                {
+                    "image_count": 0,
+                    "conversation_count": 0,
+                    "last_activity_at": "",
+                    "cover_url": "",
+                },
+            )
+
+        for item in self.load_library():
+            if not include_all and self._clean(item.get("subject_id")) != subject_id:
+                continue
+            current = bucket(self._clean(item.get("project_id")) or "default")
+            current["image_count"] += 1
+            created_at = self._clean(item.get("created_at"))
+            if created_at > self._clean(current.get("last_activity_at")):
+                current["last_activity_at"] = created_at
+            if not current.get("cover_url"):
+                current["cover_url"] = self._clean(item.get("thumb_url") or item.get("image_url"))
+
+        for item in self.load_conversations():
+            if not include_all and self._clean(item.get("subject_id")) != subject_id:
+                continue
+            current = bucket(self._clean(item.get("project_id") or item.get("projectId")) or "default")
+            current["conversation_count"] += 1
+            updated_at = self._clean(item.get("updatedAt") or item.get("updated_at"))
+            if updated_at > self._clean(current.get("last_activity_at")):
+                current["last_activity_at"] = updated_at
+
+        return stats
+
     def append_activity_log(self, item: dict[str, Any]) -> None:
         if not self._database_enabled:
             path = DATA_DIR / "activity_logs.jsonl"
@@ -192,17 +393,17 @@ class AppDataStore:
         with self._lock:
             library = _read_json(DATA_DIR / "library.json", {})
             if isinstance(library, dict) and isinstance(library.get("items"), list):
-                self.save_document("library", library)
+                self.save_library(library["items"])
                 migrated["library"] = len(library["items"])
 
             projects = _read_json(DATA_DIR / "projects.json", {})
             if isinstance(projects, dict) and isinstance(projects.get("items"), list):
-                self.save_document("projects", projects)
+                self.save_projects(projects["items"])
                 migrated["projects"] = len(projects["items"])
 
             conversations = _read_json(DATA_DIR / "conversations.json", {})
             if isinstance(conversations, dict) and isinstance(conversations.get("items"), list):
-                self.save_document("conversations", conversations)
+                self.save_conversations(conversations["items"])
                 migrated["conversations"] = len(conversations["items"])
 
             cpa_config = _read_json(DATA_DIR / "cpa_config.json", [])
@@ -242,6 +443,9 @@ class AppDataStore:
                     "status": "healthy",
                     "backend": "database",
                     "documents": session.query(AppDocumentModel).count(),
+                    "projects": session.query(ProjectDataModel).count(),
+                    "conversations": session.query(ConversationDataModel).count(),
+                    "library": session.query(ImageLibraryDataModel).count(),
                     "activity_logs": session.query(ActivityLogModel).count(),
                 }
             finally:

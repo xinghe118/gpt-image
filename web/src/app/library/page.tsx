@@ -11,6 +11,9 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
 function imageSrc(item: LibraryImageItem) {
+  if (item.image_url) {
+    return item.image_url;
+  }
   return `data:image/png;base64,${item.b64_json}`;
 }
 

@@ -114,7 +114,8 @@ export type LibraryImageItem = {
   size: string;
   created_at: string;
   index: number;
-  b64_json: string;
+  image_url: string;
+  b64_json?: string;
   revised_prompt?: string;
 };
 

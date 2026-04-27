@@ -113,6 +113,9 @@ export default function LibraryPage() {
           id: item.id,
           url: imageSrc(item),
           prompt: item.prompt,
+          model: item.model,
+          mode: item.mode,
+          size: item.size,
           name: `library-${item.id}.png`,
         }),
       );

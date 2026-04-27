@@ -1,5 +1,5 @@
 "use client";
-import { ArrowUp, ImagePlus, LoaderCircle, X } from "lucide-react";
+import { ArrowUp, ImagePlus, LoaderCircle, WandSparkles, X } from "lucide-react";
 import { useMemo, useState, type ClipboardEvent, type RefObject } from "react";
 
 import { ImageLightbox } from "@/components/image-lightbox";
@@ -18,6 +18,7 @@ type ImageComposerProps = {
   fileInputRef: RefObject<HTMLInputElement | null>;
   onPromptChange: (value: string) => void;
   onReferenceStrengthChange: (value: ImageReferenceStrength) => void;
+  onEnhancePrompt: () => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
@@ -35,6 +36,7 @@ export function ImageComposer({
   fileInputRef,
   onPromptChange,
   onReferenceStrengthChange,
+  onEnhancePrompt,
   onSubmit,
   onPickReferenceImage,
   onReferenceImageChange,
@@ -178,6 +180,15 @@ export function ImageComposer({
                   <div className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600 sm:px-3 sm:py-2 sm:text-xs">
                     <span className="hidden xs:inline">剩余额度 </span>{availableQuota}
                   </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 rounded-lg border-cyan-100 bg-cyan-50 px-3 text-xs font-medium text-cyan-700 shadow-none hover:bg-cyan-100 sm:h-10 sm:px-4 sm:text-sm"
+                    onClick={onEnhancePrompt}
+                  >
+                    <WandSparkles className="size-3.5 sm:size-4" />
+                    增强
+                  </Button>
                   {activeTaskCount > 0 && (
                     <div className="flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       <LoaderCircle className="size-3 animate-spin" />

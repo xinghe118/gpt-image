@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Gauge, History, ImageIcon, LoaderCircle, Pencil, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
+import { Activity, Gauge, History, ImageIcon, LoaderCircle, Pencil, Plus, RotateCcw, Save, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
@@ -339,6 +339,30 @@ function appendPromptSegment(current: string, segment: string) {
   return trimmed ? `${trimmed}，${segment}` : segment;
 }
 
+function enhanceImagePrompt(prompt: string, mode: ImageConversationMode, size: string, strength: ImageReferenceStrength) {
+  const trimmed = prompt.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.includes("画面主体：") || trimmed.includes("创作目标：")) {
+    return trimmed;
+  }
+
+  const ratioHint = size ? `画幅比例为 ${size}` : "画幅比例按内容自动选择";
+  const modeHint =
+    mode === "edit"
+      ? `图生图编辑，参考图影响强度为${strength === "high" ? "高" : strength === "low" ? "低" : "中"}`
+      : "文生图创作";
+
+  return [
+    `创作目标：${trimmed}`,
+    "画面主体：明确突出主要对象，保持视觉焦点清晰。",
+    `构图与镜头：${ratioHint}，主体居中或遵循三分法，层次分明，留白自然。`,
+    "风格与质感：画面精致、细节丰富、光影真实，色彩协调，避免廉价模板感。",
+    `执行要求：${modeHint}，不要生成乱码文字、畸形手部、多余肢体、低清晰度或水印。`,
+  ].join("\n");
+}
+
 function buildEditPrompt(userPrompt: string, strength: ImageReferenceStrength) {
   const normalizedPrompt = userPrompt.trim();
   const strengthInstruction =
@@ -430,6 +454,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imageSize, setImageSize] = useState("");
   const [referenceStrength, setReferenceStrength] = useState<ImageReferenceStrength>("medium");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isMobileParamsOpen, setIsMobileParamsOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
   const [conversations, setConversations] = useState<ImageConversation[]>([]);
@@ -929,7 +954,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
     const loadPendingReference = async () => {
       try {
-        const payload = JSON.parse(rawPayload) as { url?: string; name?: string };
+        const payload = JSON.parse(rawPayload) as {
+          url?: string;
+          name?: string;
+          prompt?: string;
+          model?: string;
+          size?: string;
+        };
         if (!payload.url) {
           return;
         }
@@ -948,14 +979,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
         setSelectedConversationId(null);
         setImageMode("edit");
+        if (payload.model && isImageModel(payload.model)) {
+          setImageModel(payload.model);
+        }
+        setImageSize(payload.size || "");
         setReferenceImages((prev) => [...prev, referenceImage]);
         setReferenceImageFiles((prev) => [
           ...prev,
           dataUrlToFile(referenceImage.dataUrl, referenceImage.name, referenceImage.type),
         ]);
-        setImagePrompt("");
+        setImagePrompt(payload.prompt || "");
         textareaRef.current?.focus();
-        toast.success("已从作品库加入参考图，继续输入描述即可编辑");
+        toast.success("已复用作品参数并加入参考图");
       } catch {
         if (!cancelled) {
           toast.error("读取作品库图片失败");
@@ -1214,6 +1249,21 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [runConversationQueue, updateConversation],
   );
 
+  const handleEnhancePrompt = useCallback(() => {
+    const enhancedPrompt = enhanceImagePrompt(imagePrompt, imageMode, imageSize, referenceStrength);
+    if (!enhancedPrompt) {
+      toast.error("先输入一句想生成的画面，再进行增强");
+      return;
+    }
+    if (enhancedPrompt === imagePrompt.trim()) {
+      toast.info("当前提示词已经是增强格式");
+      return;
+    }
+    setImagePrompt(enhancedPrompt);
+    textareaRef.current?.focus();
+    toast.success("已增强提示词");
+  }, [imageMode, imagePrompt, imageSize, referenceStrength]);
+
   useEffect(() => {
     for (const conversation of conversations) {
       if (
@@ -1336,6 +1386,125 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={isMobileParamsOpen} onOpenChange={setIsMobileParamsOpen}>
+          <DialogContent className="fixed bottom-0 top-auto flex max-h-[82vh] w-full max-w-none translate-y-0 flex-col overflow-hidden rounded-t-[28px] border-slate-200 bg-white p-0 shadow-2xl sm:left-1/2 sm:max-w-[520px] sm:-translate-x-1/2 sm:rounded-[28px]">
+            <DialogHeader className="border-b border-slate-200 px-5 pb-3 pt-5">
+              <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+                <SlidersHorizontal className="size-5" />
+                创作参数
+              </DialogTitle>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <div className="space-y-5">
+                <div>
+                  <div className="mb-2 text-xs font-medium text-slate-500">模式</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      className={`h-10 rounded-lg text-sm font-medium ${imageMode === "generate" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600"}`}
+                      onClick={() => setImageMode("generate")}
+                    >
+                      文生图
+                    </button>
+                    <button
+                      className={`h-10 rounded-lg text-sm font-medium ${imageMode === "edit" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600"}`}
+                      onClick={() => setImageMode("edit")}
+                    >
+                      图生图
+                    </button>
+                  </div>
+                </div>
+                {showImageModelSelector ? (
+                  <div>
+                    <div className="mb-2 text-xs font-medium text-slate-500">模型</div>
+                    <select
+                      className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                      value={imageModel}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (isImageModel(value)) {
+                          setImageModel(value);
+                        }
+                      }}
+                    >
+                      {IMAGE_MODELS.map((model) => (
+                        <option key={model.value} value={model.value}>
+                          {model.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+                <div>
+                  <div className="mb-2 text-xs font-medium text-slate-500">生成张数</div>
+                  <input
+                    className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-cyan-300"
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={imageCount}
+                    onChange={(event) => setImageCount(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <div className="mb-2 text-xs font-medium text-slate-500">图片比例</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {["1:1", "16:9", "9:16", "4:3", "3:4", ""].map((size) => (
+                      <button
+                        key={size || "auto"}
+                        className={`h-10 rounded-lg text-xs font-medium ${imageSize === size ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-600"}`}
+                        onClick={() => setImageSize(size)}
+                      >
+                        {size || "自动"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {imageMode === "edit" ? (
+                  <div>
+                    <div className="mb-2 text-xs font-medium text-slate-500">参考强度</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {REFERENCE_STRENGTH_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          className={`h-10 rounded-lg text-xs font-medium ${
+                            referenceStrength === option.value ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-600"
+                          }`}
+                          onClick={() => setReferenceStrength(option.value)}
+                        >
+                          {option.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <div>
+                  <div className="mb-2 text-xs font-medium text-slate-500">风格预设</div>
+                  <div className="grid gap-2">
+                    {stylePresets.slice(0, 6).map((preset) => (
+                      <button
+                        key={preset.id}
+                        className="rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-cyan-200 hover:bg-cyan-50/60"
+                        onClick={() => {
+                          setImagePrompt((value) => appendPromptSegment(value, preset.prompt));
+                          setIsMobileParamsOpen(false);
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-slate-900">{preset.title}</span>
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                            {preset.tag}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{preset.prompt}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <div className="flex min-h-0 flex-col bg-white">
           <div className="border-b border-slate-200 bg-white/95 px-3 py-3 sm:px-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1368,6 +1537,14 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               </div>
               <div className="flex items-center gap-2 lg:hidden">
+                <Button
+                  variant="outline"
+                  className="h-10 rounded-xl border-slate-200 bg-white text-slate-700"
+                  onClick={() => setIsMobileParamsOpen(true)}
+                >
+                  <SlidersHorizontal className="size-4" />
+                  参数
+                </Button>
                 <Button
                   variant="outline"
                   className="h-10 rounded-xl border-slate-200 bg-white text-slate-700"
@@ -1420,6 +1597,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               fileInputRef={fileInputRef}
               onPromptChange={setImagePrompt}
               onReferenceStrengthChange={setReferenceStrength}
+              onEnhancePrompt={handleEnhancePrompt}
               onSubmit={handleSubmit}
               onPickReferenceImage={() => fileInputRef.current?.click()}
               onReferenceImageChange={handleReferenceImageChange}

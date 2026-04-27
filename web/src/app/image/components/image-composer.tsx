@@ -5,17 +5,19 @@ import { useMemo, useState, type ClipboardEvent, type RefObject } from "react";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { ImageConversationMode } from "@/store/image-conversations";
+import type { ImageConversationMode, ImageReferenceStrength } from "@/store/image-conversations";
 
 type ImageComposerProps = {
   mode: ImageConversationMode;
   prompt: string;
   availableQuota: string;
   activeTaskCount: number;
+  referenceStrength: ImageReferenceStrength;
   referenceImages: Array<{ name: string; dataUrl: string }>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onPromptChange: (value: string) => void;
+  onReferenceStrengthChange: (value: ImageReferenceStrength) => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
@@ -27,10 +29,12 @@ export function ImageComposer({
   prompt,
   availableQuota,
   activeTaskCount,
+  referenceStrength,
   referenceImages,
   textareaRef,
   fileInputRef,
   onPromptChange,
+  onReferenceStrengthChange,
   onSubmit,
   onPickReferenceImage,
   onReferenceImageChange,
@@ -70,37 +74,60 @@ export function ImageComposer({
         )}
 
         {mode === "edit" && referenceImages.length > 0 ? (
-          <div className="mb-3 flex flex-wrap gap-2 px-1">
-            {referenceImages.map((image, index) => (
-              <div key={`${image.name}-${index}`} className="relative size-16">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLightboxIndex(index);
-                    setLightboxOpen(true);
-                  }}
-                  className="group size-16 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 transition hover:border-slate-300"
-                  aria-label={`预览参考图 ${image.name || index + 1}`}
-                >
-                  <img
-                    src={image.dataUrl}
-                    alt={image.name || `参考图 ${index + 1}`}
-                    className="h-full w-full object-cover"
-                  />
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRemoveReferenceImage(index);
-                  }}
-                  className="absolute -right-1 -top-1 inline-flex size-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
-                  aria-label={`移除参考图 ${image.name || index + 1}`}
-                >
-                  <X className="size-3" />
-                </button>
+          <div className="mb-3 space-y-3 px-1">
+            <div className="flex flex-wrap gap-2">
+              {referenceImages.map((image, index) => (
+                <div key={`${image.name}-${index}`} className="relative size-16">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLightboxIndex(index);
+                      setLightboxOpen(true);
+                    }}
+                    className="group size-16 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 transition hover:border-slate-300"
+                    aria-label={`预览参考图 ${image.name || index + 1}`}
+                  >
+                    <img
+                      src={image.dataUrl}
+                      alt={image.name || `参考图 ${index + 1}`}
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRemoveReferenceImage(index);
+                    }}
+                    className="absolute -right-1 -top-1 inline-flex size-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
+                    aria-label={`移除参考图 ${image.name || index + 1}`}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-cyan-100 bg-cyan-50/70 px-3 py-2">
+              <span className="text-xs font-medium text-cyan-900">参考强度</span>
+              <div className="grid grid-cols-3 gap-1">
+                {[
+                  ["low", "低"],
+                  ["medium", "中"],
+                  ["high", "高"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`h-7 rounded-lg px-3 text-xs font-medium transition ${
+                      referenceStrength === value ? "bg-cyan-700 text-white" : "bg-white text-cyan-700"
+                    }`}
+                    onClick={() => onReferenceStrengthChange(value as ImageReferenceStrength)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
         ) : null}
 

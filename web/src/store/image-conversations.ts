@@ -5,6 +5,7 @@ import localforage from "localforage";
 import type { ImageModel } from "@/lib/api";
 
 export type ImageConversationMode = "generate" | "edit";
+export type ImageReferenceStrength = "low" | "medium" | "high";
 
 export type StoredReferenceImage = {
   name: string;
@@ -30,6 +31,7 @@ export type ImageTurn = {
   referenceImages: StoredReferenceImage[];
   count: number;
   size: string;
+  referenceStrength?: ImageReferenceStrength;
   images: StoredImage[];
   createdAt: string;
   status: ImageTurnStatus;
@@ -131,6 +133,10 @@ function normalizeTurn(turn: ImageTurn & Record<string, unknown>): ImageTurn {
     referenceImages: getLegacyReferenceImages(turn),
     count: Math.max(1, Number(turn.count || normalizedImages.length || 1)),
     size: typeof turn.size === "string" ? turn.size : "",
+    referenceStrength:
+      turn.referenceStrength === "low" || turn.referenceStrength === "medium" || turn.referenceStrength === "high"
+        ? turn.referenceStrength
+        : "medium",
     images: normalizedImages,
     createdAt: String(turn.createdAt || new Date().toISOString()),
     status:

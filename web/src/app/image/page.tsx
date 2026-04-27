@@ -36,6 +36,7 @@ import {
   saveImageConversations,
   type ImageConversation,
   type ImageConversationMode,
+  type ImageReferenceStrength,
   type ImageTurn,
   type ImageTurnStatus,
   type StoredImage,
@@ -85,6 +86,28 @@ type StylePreset = {
   prompt: string;
   builtin?: boolean;
 };
+
+const REFERENCE_STRENGTH_OPTIONS: Array<{
+  value: ImageReferenceStrength;
+  title: string;
+  description: string;
+}> = [
+  {
+    value: "low",
+    title: "低",
+    description: "只参考大致构图和氛围，优先按提示词重做画面",
+  },
+  {
+    value: "medium",
+    title: "中",
+    description: "保留主体和主要构图，同时明显执行修改要求",
+  },
+  {
+    value: "high",
+    title: "高",
+    description: "尽量保持原图主体、位置和细节，只做必要修改",
+  },
+];
 
 const DEFAULT_STYLE_PRESETS: StylePreset[] = [
   {
@@ -284,11 +307,13 @@ async function runImageJob(
   prompt: string,
   model: ImageModel,
   size: string,
+  referenceStrength: ImageReferenceStrength,
 ): Promise<GeneratedImageData> {
+  const finalPrompt = mode === "edit" ? buildEditPrompt(prompt, referenceStrength) : prompt;
   const { job } =
     mode === "edit"
-      ? await createImageEditJob(referenceFiles, prompt, model, size)
-      : await createImageGenerationJob(prompt, model, size);
+      ? await createImageEditJob(referenceFiles, finalPrompt, model, size)
+      : await createImageGenerationJob(finalPrompt, model, size);
   const result = await waitForImageJob(job.job_id);
   const first = result?.data?.[0];
   if (!first?.b64_json && !first?.url) {
@@ -311,6 +336,22 @@ function sortImageConversations(conversations: ImageConversation[]) {
 function appendPromptSegment(current: string, segment: string) {
   const trimmed = current.trim();
   return trimmed ? `${trimmed}，${segment}` : segment;
+}
+
+function buildEditPrompt(userPrompt: string, strength: ImageReferenceStrength) {
+  const normalizedPrompt = userPrompt.trim();
+  const strengthInstruction =
+    strength === "low"
+      ? "参考强度：低。参考图只作为画面氛围、色彩方向和大致构图参考；允许根据用户要求重新组织主体、场景和细节。"
+      : strength === "high"
+        ? "参考强度：高。尽量保持参考图中的主体身份、位置关系、构图、姿态、材质和关键细节；只执行用户明确要求的变化，避免无关改动。"
+        : "参考强度：中。保留参考图的主要主体、构图和空间关系，同时让用户修改要求在画面中清晰可见。";
+  return [
+    "请基于上传的参考图进行图像编辑。",
+    strengthInstruction,
+    `用户修改要求：${normalizedPrompt}`,
+    "输出要求：画面自然完整，边缘和材质细节可信，不要添加与用户要求无关的文字、水印或多余主体。",
+  ].join("\n");
 }
 
 async function recoverConversationHistory(items: ImageConversation[]) {
@@ -386,6 +427,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imageModel, setImageModel] = useState<ImageModel>("gpt-image-2");
   const [showImageModelSelector, setShowImageModelSelector] = useState(true);
   const [imageSize, setImageSize] = useState("");
+  const [referenceStrength, setReferenceStrength] = useState<ImageReferenceStrength>("medium");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -942,6 +984,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               queuedTurn.prompt,
               queuedTurn.model,
               queuedTurn.size,
+              queuedTurn.referenceStrength || "medium",
             );
 
             const nextImage: StoredImage = {
@@ -1107,6 +1150,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       referenceImages: imageMode === "edit" ? referenceImages : [],
       count: parsedCount,
       size: imageSize,
+      referenceStrength: imageMode === "edit" ? referenceStrength : undefined,
       images: Array.from({ length: parsedCount }, (_, index) => ({
         id: `${turnId}-${index}`,
         status: "loading" as const,
@@ -1261,10 +1305,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               prompt={imagePrompt}
               availableQuota={availableQuota}
               activeTaskCount={activeTaskCount}
+              referenceStrength={referenceStrength}
               referenceImages={referenceImages}
               textareaRef={textareaRef}
               fileInputRef={fileInputRef}
               onPromptChange={setImagePrompt}
+              onReferenceStrengthChange={setReferenceStrength}
               onSubmit={handleSubmit}
               onPickReferenceImage={() => fileInputRef.current?.click()}
               onReferenceImageChange={handleReferenceImageChange}
@@ -1379,6 +1425,27 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   ))}
                 </div>
               </div>
+              {imageMode === "edit" ? (
+                <div>
+                  <div className="mb-2 text-xs font-medium text-slate-500">参考强度</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {REFERENCE_STRENGTH_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        className={`h-9 rounded-lg text-xs font-medium ${
+                          referenceStrength === option.value ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-600"
+                        }`}
+                        onClick={() => setReferenceStrength(option.value)}
+                      >
+                        {option.title}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    {REFERENCE_STRENGTH_OPTIONS.find((option) => option.value === referenceStrength)?.description}
+                  </p>
+                </div>
+              ) : null}
               <div>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div className="text-xs font-medium text-slate-500">风格预设</div>

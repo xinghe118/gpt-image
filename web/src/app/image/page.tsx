@@ -16,13 +16,15 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
-  editImage,
+  createImageEditJob,
+  createImageGenerationJob,
   fetchAccounts,
   fetchCurrentIdentity,
+  fetchImageJob,
   fetchUIConfig,
-  generateImage,
   type Account,
   type CurrentIdentity,
+  type GeneratedImageData,
   type ImageModel,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -253,6 +255,46 @@ function buildReferenceImageFromResult(image: StoredImage, fileName: string): St
     type: "image/png",
     dataUrl: `data:image/png;base64,${image.b64_json}`,
   };
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForImageJob(jobId: string) {
+  const startedAt = Date.now();
+  let interval = 1500;
+  while (Date.now() - startedAt < 10 * 60 * 1000) {
+    const { job } = await fetchImageJob(jobId);
+    if (job.status === "succeeded") {
+      return job.result;
+    }
+    if (job.status === "failed") {
+      throw new Error(job.error || "生成失败");
+    }
+    await delay(interval);
+    interval = Math.min(5000, interval + 500);
+  }
+  throw new Error("图片生成仍在处理中，请稍后到作品库查看");
+}
+
+async function runImageJob(
+  mode: ImageConversationMode,
+  referenceFiles: File[],
+  prompt: string,
+  model: ImageModel,
+  size: string,
+): Promise<GeneratedImageData> {
+  const { job } =
+    mode === "edit"
+      ? await createImageEditJob(referenceFiles, prompt, model, size)
+      : await createImageGenerationJob(prompt, model, size);
+  const result = await waitForImageJob(job.job_id);
+  const first = result?.data?.[0];
+  if (!first?.b64_json && !first?.url) {
+    throw new Error("未返回图片数据");
+  }
+  return first;
 }
 
 function pickFallbackConversationId(conversations: ImageConversation[]) {
@@ -894,14 +936,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
         const tasks = pendingImages.map(async (pendingImage) => {
           try {
-            const data =
-              queuedTurn.mode === "edit"
-                ? await editImage(referenceFiles, queuedTurn.prompt, queuedTurn.model, queuedTurn.size)
-                : await generateImage(queuedTurn.prompt, queuedTurn.model, queuedTurn.size);
-            const first = data.data?.[0];
-            if (!first?.b64_json && !first?.url) {
-              throw new Error("未返回图片数据");
-            }
+            const first = await runImageJob(
+              queuedTurn.mode,
+              referenceFiles,
+              queuedTurn.prompt,
+              queuedTurn.model,
+              queuedTurn.size,
+            );
 
             const nextImage: StoredImage = {
               id: pendingImage.id,

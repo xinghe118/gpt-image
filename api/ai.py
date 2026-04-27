@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import threading
 import time
+import uuid
+from datetime import datetime, timezone
+from typing import Callable
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -45,6 +49,61 @@ class ResponseCreateRequest(BaseModel):
     stream: bool | None = None
 
 
+class ImageJobService:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._jobs: dict[str, dict[str, object]] = {}
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def create(self, *, identity: dict[str, object], task: Callable[[], dict[str, object]]) -> dict[str, object]:
+        job_id = uuid.uuid4().hex
+        now = self._now_iso()
+        job = {
+            "job_id": job_id,
+            "status": "pending",
+            "subject_id": str(identity.get("id") or ""),
+            "created_at": now,
+            "updated_at": now,
+            "result": None,
+            "error": "",
+        }
+        with self._lock:
+            self._jobs[job_id] = job
+            if len(self._jobs) > 300:
+                for old_job_id in list(self._jobs.keys())[:100]:
+                    if self._jobs.get(old_job_id, {}).get("status") in {"succeeded", "failed"}:
+                        self._jobs.pop(old_job_id, None)
+
+        thread = threading.Thread(target=self._run, args=(job_id, task), name=f"image-job-{job_id[:8]}", daemon=True)
+        thread.start()
+        return self.get(job_id) or job
+
+    def _run(self, job_id: str, task: Callable[[], dict[str, object]]) -> None:
+        self._update(job_id, status="running")
+        try:
+            self._update(job_id, status="succeeded", result=task(), error="")
+        except Exception as exc:
+            self._update(job_id, status="failed", error=str(exc))
+
+    def _update(self, job_id: str, **updates: object) -> None:
+        with self._lock:
+            current = self._jobs.get(job_id)
+            if not current:
+                return
+            self._jobs[job_id] = {**current, **updates, "updated_at": self._now_iso()}
+
+    def get(self, job_id: str) -> dict[str, object] | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return dict(job) if job else None
+
+
+image_job_service = ImageJobService()
+
+
 def _normalize_image_amount(value: object, default: int = 1) -> int:
     try:
         return max(1, min(10, int(value or default)))
@@ -81,6 +140,115 @@ def _format_image_api_result(
             next_item["url"] = record.get("image_url")
         formatted.append(next_item)
     return {"created": result.get("created"), "data": formatted}
+
+
+def _run_generation_request(
+        *,
+        chatgpt_service: ChatGPTService,
+        identity: dict[str, object],
+        prompt: str,
+        model: str,
+        n: int,
+        size: str | None,
+        response_format: str,
+        base_url: str,
+        started_at: float,
+) -> dict[str, object]:
+    try:
+        result = chatgpt_service.generate_with_pool(prompt, model, n, size, "b64_json", base_url)
+        result_count = len(result.get("data") or [])
+        records: list[dict[str, object]] = []
+        if result_count > 0:
+            auth_service.consume_quota(identity, result_count)
+            records = image_library_service.record_images(
+                identity=identity,
+                prompt=prompt,
+                model=model,
+                mode="generate",
+                size=size,
+                images=result.get("data") or [],
+            )
+        activity_log_service.record(
+            "images.generations",
+            route="/v1/images/generations",
+            model=model,
+            subject_id=str(identity.get("id") or ""),
+            role=str(identity.get("role") or ""),
+            prompt=prompt,
+            duration_ms=int((time.perf_counter() - started_at) * 1000),
+            metadata={"stream": False, "n": n, "size": size, "result_count": result_count},
+        )
+        return _format_image_api_result(result, records, response_format)
+    except ImageGenerationError as exc:
+        activity_log_service.record(
+            "images.generations",
+            level="warning",
+            status="error",
+            route="/v1/images/generations",
+            model=model,
+            subject_id=str(identity.get("id") or ""),
+            role=str(identity.get("role") or ""),
+            prompt=prompt,
+            duration_ms=int((time.perf_counter() - started_at) * 1000),
+            error=str(exc),
+            metadata={"stream": False, "n": n, "size": size},
+        )
+        raise exc
+
+
+def _run_edit_request(
+        *,
+        chatgpt_service: ChatGPTService,
+        identity: dict[str, object],
+        prompt: str,
+        images: list[tuple[bytes, str, str]],
+        model: str,
+        n: int,
+        size: str | None,
+        response_format: str,
+        base_url: str,
+        started_at: float,
+) -> dict[str, object]:
+    try:
+        result = chatgpt_service.edit_with_pool(prompt, images, model, n, size, "b64_json", base_url)
+        result_count = len(result.get("data") or [])
+        records: list[dict[str, object]] = []
+        if result_count > 0:
+            auth_service.consume_quota(identity, result_count)
+            records = image_library_service.record_images(
+                identity=identity,
+                prompt=prompt,
+                model=model,
+                mode="edit",
+                size=size,
+                images=result.get("data") or [],
+            )
+        activity_log_service.record(
+            "images.edits",
+            route="/v1/images/edits",
+            model=model,
+            subject_id=str(identity.get("id") or ""),
+            role=str(identity.get("role") or ""),
+            prompt=prompt,
+            duration_ms=int((time.perf_counter() - started_at) * 1000),
+            metadata={"stream": False, "n": n, "size": size, "image_count": len(images), "result_count": result_count},
+        )
+        return _format_image_api_result(result, records, response_format)
+    except ImageGenerationError as exc:
+        activity_log_service.record(
+            "images.edits",
+            level="warning",
+            status="error",
+            route="/v1/images/edits",
+            model=model,
+            subject_id=str(identity.get("id") or ""),
+            role=str(identity.get("role") or ""),
+            prompt=prompt,
+            duration_ms=int((time.perf_counter() - started_at) * 1000),
+            error=str(exc),
+            metadata={"stream": False, "n": n, "size": size, "image_count": len(images)},
+        )
+        raise exc
 
 
 def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
@@ -146,47 +314,49 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 media_type="text/event-stream",
             )
         try:
-            result = await run_in_threadpool(
-                chatgpt_service.generate_with_pool, body.prompt, body.model, body.n, body.size, "b64_json", base_url
-            )
-            result_count = len(result.get("data") or [])
-            records: list[dict[str, object]] = []
-            if result_count > 0:
-                auth_service.consume_quota(identity, result_count)
-                records = image_library_service.record_images(
-                    identity=identity,
-                    prompt=body.prompt,
-                    model=body.model,
-                    mode="generate",
-                    size=body.size,
-                    images=result.get("data") or [],
-                )
-            activity_log_service.record(
-                "images.generations",
-                route="/v1/images/generations",
-                model=body.model,
-                subject_id=str(identity.get("id") or ""),
-                role=str(identity.get("role") or ""),
+            return await run_in_threadpool(
+                _run_generation_request,
+                chatgpt_service=chatgpt_service,
+                identity=identity,
                 prompt=body.prompt,
-                duration_ms=int((time.perf_counter() - started_at) * 1000),
-                metadata={"stream": False, "n": body.n, "size": body.size, "result_count": result_count},
+                model=body.model,
+                n=body.n,
+                size=body.size,
+                response_format=body.response_format,
+                base_url=base_url,
+                started_at=started_at,
             )
-            return _format_image_api_result(result, records, body.response_format)
         except ImageGenerationError as exc:
-            activity_log_service.record(
-                "images.generations",
-                level="warning",
-                status="error",
-                route="/v1/images/generations",
-                model=body.model,
-                subject_id=str(identity.get("id") or ""),
-                role=str(identity.get("role") or ""),
-                prompt=body.prompt,
-                duration_ms=int((time.perf_counter() - started_at) * 1000),
-                error=str(exc),
-                metadata={"stream": False, "n": body.n, "size": body.size},
-            )
             raise_image_quota_error(exc)
+
+    @router.post("/api/image/jobs/generations")
+    async def create_image_generation_job(
+            body: ImageGenerationRequest,
+            request: Request,
+            authorization: str | None = Header(default=None),
+    ):
+        identity = require_identity(authorization)
+        started_at = time.perf_counter()
+        base_url = resolve_image_base_url(request)
+        try:
+            auth_service.ensure_quota_available(identity, body.n)
+        except ValueError as exc:
+            raise HTTPException(status_code=429, detail={"error": str(exc)}) from exc
+        job = image_job_service.create(
+            identity=identity,
+            task=lambda: _run_generation_request(
+                chatgpt_service=chatgpt_service,
+                identity=identity,
+                prompt=body.prompt,
+                model=body.model,
+                n=body.n,
+                size=body.size,
+                response_format=body.response_format,
+                base_url=base_url,
+                started_at=started_at,
+            ),
+        )
+        return {"job": job}
 
     @router.post("/v1/images/edits")
     async def edit_images(
@@ -252,47 +422,78 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 media_type="text/event-stream",
             )
         try:
-            result = await run_in_threadpool(
-                chatgpt_service.edit_with_pool, prompt, images, model, n, size, "b64_json", base_url
-            )
-            result_count = len(result.get("data") or [])
-            records: list[dict[str, object]] = []
-            if result_count > 0:
-                auth_service.consume_quota(identity, result_count)
-                records = image_library_service.record_images(
-                    identity=identity,
-                    prompt=prompt,
-                    model=model,
-                    mode="edit",
-                    size=size,
-                    images=result.get("data") or [],
-                )
-            activity_log_service.record(
-                "images.edits",
-                route="/v1/images/edits",
-                model=model,
-                subject_id=str(identity.get("id") or ""),
-                role=str(identity.get("role") or ""),
+            return await run_in_threadpool(
+                _run_edit_request,
+                chatgpt_service=chatgpt_service,
+                identity=identity,
                 prompt=prompt,
-                duration_ms=int((time.perf_counter() - started_at) * 1000),
-                metadata={"stream": False, "n": n, "size": size, "image_count": len(images), "result_count": result_count},
+                images=images,
+                model=model,
+                n=n,
+                size=size,
+                response_format=response_format,
+                base_url=base_url,
+                started_at=started_at,
             )
-            return _format_image_api_result(result, records, response_format)
         except ImageGenerationError as exc:
-            activity_log_service.record(
-                "images.edits",
-                level="warning",
-                status="error",
-                route="/v1/images/edits",
-                model=model,
-                subject_id=str(identity.get("id") or ""),
-                role=str(identity.get("role") or ""),
-                prompt=prompt,
-                duration_ms=int((time.perf_counter() - started_at) * 1000),
-                error=str(exc),
-                metadata={"stream": False, "n": n, "size": size, "image_count": len(images)},
-            )
             raise_image_quota_error(exc)
+
+    @router.post("/api/image/jobs/edits")
+    async def create_image_edit_job(
+            request: Request,
+            authorization: str | None = Header(default=None),
+            image: list[UploadFile] | None = File(default=None),
+            image_list: list[UploadFile] | None = File(default=None, alias="image[]"),
+            prompt: str = Form(...),
+            model: str = Form(default="gpt-image-2"),
+            n: int = Form(default=1),
+            size: str | None = Form(default=None),
+            response_format: str = Form(default="url"),
+    ):
+        identity = require_identity(authorization)
+        started_at = time.perf_counter()
+        if n < 1 or n > 4:
+            raise HTTPException(status_code=400, detail={"error": "n must be between 1 and 4"})
+        try:
+            auth_service.ensure_quota_available(identity, n)
+        except ValueError as exc:
+            raise HTTPException(status_code=429, detail={"error": str(exc)}) from exc
+        uploads = [*(image or []), *(image_list or [])]
+        if not uploads:
+            raise HTTPException(status_code=400, detail={"error": "image file is required"})
+        base_url = resolve_image_base_url(request)
+        images: list[tuple[bytes, str, str]] = []
+        for upload in uploads:
+            image_data = await upload.read()
+            if not image_data:
+                raise HTTPException(status_code=400, detail={"error": "image file is empty"})
+            images.append((image_data, upload.filename or "image.png", upload.content_type or "image/png"))
+        job = image_job_service.create(
+            identity=identity,
+            task=lambda: _run_edit_request(
+                chatgpt_service=chatgpt_service,
+                identity=identity,
+                prompt=prompt,
+                images=images,
+                model=model,
+                n=n,
+                size=size,
+                response_format=response_format,
+                base_url=base_url,
+                started_at=started_at,
+            ),
+        )
+        return {"job": job}
+
+    @router.get("/api/image/jobs/{job_id}")
+    async def get_image_job(job_id: str, authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        job = image_job_service.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail={"error": "image job not found"})
+        if identity.get("role") != "admin" and str(job.get("subject_id") or "") != str(identity.get("id") or ""):
+            raise HTTPException(status_code=403, detail={"error": "image job permission denied"})
+        return {"job": job}
 
     @router.post("/v1/chat/completions")
     async def create_chat_completion(body: ChatCompletionRequest, authorization: str | None = Header(default=None)):

@@ -181,6 +181,15 @@ export type GeneratedImageData = {
   revised_prompt?: string;
 };
 
+export type ImageJob = {
+  job_id: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  result?: { created: number; data: GeneratedImageData[] } | null;
+  error?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export async function generateImage(prompt: string, model?: ImageModel, size?: string) {
   return httpRequest<{ created: number; data: GeneratedImageData[] }>(
     "/v1/images/generations",
@@ -195,6 +204,19 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
       },
     },
   );
+}
+
+export async function createImageGenerationJob(prompt: string, model?: ImageModel, size?: string) {
+  return httpRequest<{ job: ImageJob }>("/api/image/jobs/generations", {
+    method: "POST",
+    body: {
+      prompt,
+      ...(model ? { model } : {}),
+      ...(size ? { size } : {}),
+      n: 1,
+      response_format: "url",
+    },
+  });
 }
 
 export async function editImage(files: File | File[], prompt: string, model?: ImageModel, size?: string) {
@@ -232,6 +254,33 @@ export async function updateSettingsConfig(settings: SettingsConfig) {
     method: "POST",
     body: settings,
   });
+}
+
+export async function createImageEditJob(files: File | File[], prompt: string, model?: ImageModel, size?: string) {
+  const formData = new FormData();
+  const uploadFiles = Array.isArray(files) ? files : [files];
+
+  uploadFiles.forEach((file) => {
+    formData.append("image", file);
+  });
+  formData.append("prompt", prompt);
+  if (model) {
+    formData.append("model", model);
+  }
+  if (size) {
+    formData.append("size", size);
+  }
+  formData.append("n", "1");
+  formData.append("response_format", "url");
+
+  return httpRequest<{ job: ImageJob }>("/api/image/jobs/edits", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function fetchImageJob(jobId: string) {
+  return httpRequest<{ job: ImageJob }>(`/api/image/jobs/${jobId}`);
 }
 
 export async function fetchUIConfig() {

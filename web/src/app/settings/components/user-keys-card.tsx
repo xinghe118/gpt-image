@@ -241,6 +241,15 @@ export function UserKeysCard() {
                         <Badge variant={item.enabled ? "success" : "secondary"} className="rounded-md">
                           {item.enabled ? "已启用" : "已禁用"}
                         </Badge>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-500 transition hover:bg-stone-200 hover:text-stone-700"
+                          onClick={() => void handleCopy(item.id)}
+                          title="复制密钥编号"
+                        >
+                          <Copy className="size-3" />
+                          复制编号
+                        </button>
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500">
                         <span>创建时间 {formatDateTime(item.created_at)}</span>

@@ -1,6 +1,7 @@
 "use client";
 
-import { Import, LoaderCircle, Pencil, Plus, ServerCog, Trash2 } from "lucide-react";
+import { ChevronDown, Import, LoaderCircle, Pencil, Plus, ServerCog, Trash2 } from "lucide-react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useSettingsStore } from "../store";
 
 export function CPAPoolsCard() {
+  const [showHelp, setShowHelp] = useState(false);
   const pools = useSettingsStore((state) => state.pools);
   const isLoadingPools = useSettingsStore((state) => state.isLoadingPools);
   const deletingId = useSettingsStore((state) => state.deletingId);
@@ -21,7 +23,7 @@ export function CPAPoolsCard() {
   return (
     <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
       <CardContent className="space-y-6 p-6">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl bg-stone-100">
               <ServerCog className="size-5 text-stone-600" />
@@ -53,7 +55,7 @@ export function CPAPoolsCard() {
             </div>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {pools.map((pool) => {
               const isBusy = deletingId === pool.id || loadingFilesId === pool.id;
               const importJob = pool.import_job ?? null;
@@ -62,9 +64,9 @@ export function CPAPoolsCard() {
                 : 0;
 
               return (
-                <div key={pool.id} className="flex flex-col gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
+                <div key={pool.id} className="rounded-xl border border-stone-200 bg-white px-4 py-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium text-stone-800">{pool.name || pool.base_url}</div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-xs text-stone-400">{pool.base_url}</span>
@@ -72,8 +74,41 @@ export function CPAPoolsCard() {
                           {pool.has_secret_key ? "密钥已保存" : "缺少密钥"}
                         </Badge>
                       </div>
+                      {importJob ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                          <Badge
+                            variant={
+                              importJob.status === "completed"
+                                ? "success"
+                                : importJob.status === "failed"
+                                  ? "danger"
+                                  : "info"
+                            }
+                            className="rounded-md px-1.5 py-0 text-[10px]"
+                          >
+                            {progress}%
+                          </Badge>
+                          <span>{importJob.status}</span>
+                          <span>已处理 {importJob.completed}/{importJob.total}</span>
+                          <span>新增 {importJob.added}</span>
+                          {importJob.failed ? <span className="text-rose-500">失败 {importJob.failed}</span> : null}
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button
+                        variant="outline"
+                        className="h-8 rounded-lg border-stone-200 bg-white px-3 text-xs text-stone-600"
+                        onClick={() => void browseFiles(pool)}
+                        disabled={isBusy}
+                      >
+                        {loadingFilesId === pool.id ? (
+                          <LoaderCircle className="size-3.5 animate-spin" />
+                        ) : (
+                          <Import className="size-3.5" />
+                        )}
+                        同步
+                      </Button>
                       <button
                         type="button"
                         className="rounded-lg p-2 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
@@ -98,76 +133,29 @@ export function CPAPoolsCard() {
                       </button>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      className="h-8 rounded-lg border-stone-200 bg-white px-3 text-xs text-stone-600"
-                      onClick={() => void browseFiles(pool)}
-                      disabled={isBusy}
-                    >
-                      {loadingFilesId === pool.id ? (
-                        <LoaderCircle className="size-3.5 animate-spin" />
-                      ) : (
-                        <Import className="size-3.5" />
-                      )}
-                      同步
-                    </Button>
-                  </div>
-
-                  {importJob ? (
-                    <div className="space-y-2 rounded-xl bg-stone-50 px-3 py-3">
-                      <div className="text-xs font-medium tracking-[0.16em] text-stone-400 uppercase">导入任务</div>
-                      <div className="rounded-lg border border-stone-200 bg-white px-3 py-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium text-stone-700">
-                              状态 {importJob.status}，已处理 {importJob.completed}/{importJob.total}
-                            </div>
-                            <div className="truncate text-xs text-stone-400">
-                              任务 {importJob.job_id.slice(0, 8)} · {importJob.created_at}
-                            </div>
-                          </div>
-                          <Badge
-                            variant={
-                              importJob.status === "completed"
-                                ? "success"
-                                : importJob.status === "failed"
-                                  ? "danger"
-                                  : "info"
-                            }
-                            className="rounded-md"
-                          >
-                            {progress}%
-                          </Badge>
-                        </div>
-                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-stone-200">
-                          <div className="h-full rounded-full bg-stone-900 transition-all" style={{ width: `${progress}%` }} />
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-stone-500">
-                          <span>新增 {importJob.added}</span>
-                          <span>跳过 {importJob.skipped}</span>
-                          <span>刷新 {importJob.refreshed}</span>
-                          <span>失败 {importJob.failed}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
               );
             })}
           </div>
         )}
 
-        <div className="rounded-xl bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-500">
-          <p className="font-medium text-stone-600">使用说明</p>
-          <ul className="mt-1 list-inside list-disc space-y-0.5">
-            <li>页面进入后先读取系统里已配置的 CPA 连接。</li>
-            <li>点击某个连接的「同步」后，会先读取远程账号列表并展示给前端选择。</li>
-            <li>确认选择后，后端后台下载对应 access_token 并导入本地号池。</li>
-            <li>前端只轮询导入进度，不直接参与 download。</li>
-          </ul>
-        </div>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between rounded-xl bg-stone-50 px-4 py-3 text-left text-sm text-stone-500 transition hover:bg-stone-100"
+          onClick={() => setShowHelp((value) => !value)}
+        >
+          <span className="font-medium text-stone-600">使用说明</span>
+          <ChevronDown className={`size-4 transition ${showHelp ? "rotate-180" : ""}`} />
+        </button>
+        {showHelp ? (
+          <div className="rounded-xl bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-500">
+            <ul className="list-inside list-disc space-y-0.5">
+              <li>点击连接的「同步」后，会先读取远程账号列表并展示给前端选择。</li>
+              <li>确认选择后，后端后台下载对应 access_token 并导入本地号池。</li>
+              <li>前端只轮询导入进度，不直接参与 download。</li>
+            </ul>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

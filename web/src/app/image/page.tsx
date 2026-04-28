@@ -52,6 +52,7 @@ const ACTIVE_CONVERSATION_STORAGE_KEY = "gpt-image:image_active_conversation_id"
 const IMAGE_SIZE_STORAGE_KEY = "gpt-image:image_last_size";
 const IMAGE_MODEL_STORAGE_KEY = "gpt-image:image_last_model";
 const STYLE_PRESETS_STORAGE_KEY = "gpt-image:image_style_presets";
+const CREATIVE_TEMPLATES_STORAGE_KEY = "gpt-image:creative_templates";
 const PENDING_REFERENCE_IMAGE_STORAGE_KEY = "gpt-image:pending_reference_image";
 const ACTIVE_PROJECT_STORAGE_KEY = "gpt-image:active_project_id";
 const LEGACY_STORAGE_PREFIX = "chatgpt" + "2api";
@@ -90,6 +91,16 @@ type StylePreset = {
   id: string;
   title: string;
   tag: string;
+  prompt: string;
+  builtin?: boolean;
+};
+
+type CreativeTemplate = {
+  id: string;
+  title: string;
+  category: string;
+  mode: "generate" | "edit" | "any";
+  description: string;
   prompt: string;
   builtin?: boolean;
 };
@@ -175,6 +186,59 @@ const DEFAULT_STYLE_PRESETS: StylePreset[] = [
   },
 ];
 
+const DEFAULT_CREATIVE_TEMPLATES: CreativeTemplate[] = [
+  {
+    id: "wechat-mini-program",
+    title: "小程序页面图",
+    category: "UI",
+    mode: "generate",
+    description: "适合生成产品页面、业务首页和功能详情页。",
+    prompt:
+      "生成一张精致的移动端小程序页面设计图。请包含清晰的顶部导航、核心功能入口、内容列表或卡片、底部导航；视觉风格现代、层级明确、留白舒适，适合真实产品落地。页面主题：",
+    builtin: true,
+  },
+  {
+    id: "commercial-poster",
+    title: "商业宣传海报",
+    category: "Poster",
+    mode: "generate",
+    description: "适合活动、品牌、城市文旅、产品推广。",
+    prompt:
+      "设计一张商业宣传海报。请明确主视觉、标题区域、卖点信息和行动引导；构图高级，色彩有品牌感，画面可用于线上投放。主题和关键信息：",
+    builtin: true,
+  },
+  {
+    id: "product-visual",
+    title: "产品主视觉",
+    category: "Product",
+    mode: "generate",
+    description: "适合电商主图、产品发布、广告素材。",
+    prompt:
+      "生成一张高端产品主视觉图。请突出产品主体、材质细节和使用场景；背景干净，光影精准，留出排版空间，整体具有商业广告质感。产品说明：",
+    builtin: true,
+  },
+  {
+    id: "photo-retouch",
+    title: "照片精修",
+    category: "Edit",
+    mode: "edit",
+    description: "适合人像、合照、生活照片的自然优化。",
+    prompt:
+      "基于参考图进行自然精修。请保持人物身份、五官、姿态和真实场景不变；优化光线、肤色、清晰度和画面质感，避免过度磨皮或改变主体。具体修改要求：",
+    builtin: true,
+  },
+  {
+    id: "social-cover",
+    title: "社媒封面",
+    category: "Cover",
+    mode: "generate",
+    description: "适合小红书、公众号、视频封面。",
+    prompt:
+      "生成一张社交媒体封面图。请保证第一眼有明确视觉焦点，标题区域醒目但不拥挤，画面适合移动端信息流浏览。主题：",
+    builtin: true,
+  },
+];
+
 function buildConversationTitle(prompt: string) {
   const trimmed = prompt.trim();
   if (trimmed.length <= 12) {
@@ -235,6 +299,38 @@ function normalizeStylePresets(value: unknown): StylePreset[] {
     .filter((item): item is StylePreset => Boolean(item));
 
   return normalized.length ? normalized : DEFAULT_STYLE_PRESETS;
+}
+
+function normalizeCreativeTemplates(value: unknown): CreativeTemplate[] {
+  if (!Array.isArray(value)) {
+    return DEFAULT_CREATIVE_TEMPLATES;
+  }
+
+  const normalized = value
+    .map((item): CreativeTemplate | null => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const template = item as Partial<CreativeTemplate>;
+      const title = String(template.title || "").trim();
+      const prompt = String(template.prompt || "").trim();
+      if (!title || !prompt) {
+        return null;
+      }
+      const mode = template.mode === "generate" || template.mode === "edit" || template.mode === "any" ? template.mode : "any";
+      return {
+        id: String(template.id || createId()),
+        title,
+        category: String(template.category || "Template").trim() || "Template",
+        mode,
+        description: String(template.description || "").trim(),
+        prompt,
+        builtin: Boolean(template.builtin),
+      };
+    })
+    .filter((item): item is CreativeTemplate => Boolean(item));
+
+  return normalized.length ? normalized : DEFAULT_CREATIVE_TEMPLATES;
 }
 
 function readFileAsDataUrl(file: File) {
@@ -480,6 +576,14 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [presetTitle, setPresetTitle] = useState("");
   const [presetTag, setPresetTag] = useState("");
   const [presetPrompt, setPresetPrompt] = useState("");
+  const [creativeTemplates, setCreativeTemplates] = useState<CreativeTemplate[]>(DEFAULT_CREATIVE_TEMPLATES);
+  const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<CreativeTemplate | null>(null);
+  const [templateTitle, setTemplateTitle] = useState("");
+  const [templateCategory, setTemplateCategory] = useState("");
+  const [templateMode, setTemplateMode] = useState<CreativeTemplate["mode"]>("generate");
+  const [templateDescription, setTemplateDescription] = useState("");
+  const [templatePrompt, setTemplatePrompt] = useState("");
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("default");
   const [newProjectName, setNewProjectName] = useState("");
@@ -584,6 +688,21 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const rawTemplates = window.localStorage.getItem(CREATIVE_TEMPLATES_STORAGE_KEY);
+    if (!rawTemplates) {
+      return;
+    }
+    try {
+      setCreativeTemplates(normalizeCreativeTemplates(JSON.parse(rawTemplates)));
+    } catch {
+      setCreativeTemplates(DEFAULT_CREATIVE_TEMPLATES);
+    }
+  }, []);
+
   const persistStylePresets = useCallback((items: StylePreset[]) => {
     const normalized = normalizeStylePresets(items);
     setStylePresets(normalized);
@@ -669,6 +788,125 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     persistStylePresets(DEFAULT_STYLE_PRESETS);
     toast.success("已恢复默认风格预设");
   }, [persistStylePresets]);
+
+  const persistCreativeTemplates = useCallback((items: CreativeTemplate[]) => {
+    const normalized = normalizeCreativeTemplates(items);
+    setCreativeTemplates(normalized);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(CREATIVE_TEMPLATES_STORAGE_KEY, JSON.stringify(normalized));
+    }
+  }, []);
+
+  const applyCreativeTemplate = useCallback((template: CreativeTemplate, closeMobilePanel = false) => {
+    if (template.mode !== "any") {
+      setImageMode(template.mode);
+    }
+    setImagePrompt((value) => {
+      const current = value.trim();
+      return current ? `${template.prompt}\n\n补充要求：${current}` : template.prompt;
+    });
+    if (closeMobilePanel) {
+      setIsMobileParamsOpen(false);
+    }
+    textareaRef.current?.focus();
+    toast.success(`已套用模板：${template.title}`);
+  }, []);
+
+  const openCreateTemplate = useCallback(() => {
+    setEditingTemplate(null);
+    setTemplateTitle("");
+    setTemplateCategory("Template");
+    setTemplateMode(imageMode);
+    setTemplateDescription("");
+    setTemplatePrompt("");
+    setIsTemplateEditorOpen(true);
+  }, [imageMode]);
+
+  const openEditTemplate = useCallback((template: CreativeTemplate) => {
+    setEditingTemplate(template);
+    setTemplateTitle(template.title);
+    setTemplateCategory(template.category);
+    setTemplateMode(template.mode);
+    setTemplateDescription(template.description);
+    setTemplatePrompt(template.prompt);
+    setIsTemplateEditorOpen(true);
+  }, []);
+
+  const handleSaveTemplate = useCallback(() => {
+    const title = templateTitle.trim();
+    const category = templateCategory.trim() || "Template";
+    const description = templateDescription.trim();
+    const prompt = templatePrompt.trim();
+
+    if (!title) {
+      toast.error("请输入模板名称");
+      return;
+    }
+    if (!prompt) {
+      toast.error("请输入模板提示词");
+      return;
+    }
+
+    if (editingTemplate) {
+      persistCreativeTemplates(
+        creativeTemplates.map((template) =>
+          template.id === editingTemplate.id
+            ? {
+                ...template,
+                title,
+                category,
+                mode: templateMode,
+                description,
+                prompt,
+              }
+            : template,
+        ),
+      );
+      toast.success("创作模板已更新");
+    } else {
+      persistCreativeTemplates([
+        ...creativeTemplates,
+        {
+          id: createId(),
+          title,
+          category,
+          mode: templateMode,
+          description,
+          prompt,
+          builtin: false,
+        },
+      ]);
+      toast.success("已新增创作模板");
+    }
+
+    setIsTemplateEditorOpen(false);
+  }, [
+    creativeTemplates,
+    editingTemplate,
+    persistCreativeTemplates,
+    templateCategory,
+    templateDescription,
+    templateMode,
+    templatePrompt,
+    templateTitle,
+  ]);
+
+  const handleDeleteTemplate = useCallback(
+    (template: CreativeTemplate) => {
+      if (template.builtin) {
+        toast.error("默认模板只能编辑，不能删除");
+        return;
+      }
+      persistCreativeTemplates(creativeTemplates.filter((item) => item.id !== template.id));
+      toast.success("已删除自定义模板");
+    },
+    [creativeTemplates, persistCreativeTemplates],
+  );
+
+  const resetCreativeTemplates = useCallback(() => {
+    persistCreativeTemplates(DEFAULT_CREATIVE_TEMPLATES);
+    toast.success("已恢复默认创作模板");
+  }, [persistCreativeTemplates]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1732,6 +1970,28 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                 ) : null}
                 <div>
+                  <div className="mb-2 text-xs font-medium text-slate-500">创作模板</div>
+                  <div className="grid gap-2">
+                    {creativeTemplates.slice(0, 5).map((template) => (
+                      <button
+                        key={template.id}
+                        className="rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-cyan-200 hover:bg-cyan-50/60"
+                        onClick={() => applyCreativeTemplate(template, true)}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-slate-900">{template.title}</span>
+                          <span className="rounded-md bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-700">
+                            {template.category}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                          {template.description || template.prompt}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
                   <div className="mb-2 text-xs font-medium text-slate-500">风格预设</div>
                   <div className="grid gap-2">
                     {stylePresets.slice(0, 6).map((preset) => (
@@ -2027,6 +2287,69 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               ) : null}
               <div>
                 <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-slate-500">创作模板</div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="inline-flex h-7 items-center gap-1 rounded-lg bg-slate-950 px-2 text-xs font-medium text-white transition hover:bg-slate-800"
+                      onClick={openCreateTemplate}
+                    >
+                      <Plus className="size-3.5" />
+                      新增
+                    </button>
+                    <button
+                      className="grid h-7 w-7 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-cyan-200 hover:text-cyan-700"
+                      title="恢复默认模板"
+                      onClick={resetCreativeTemplates}
+                    >
+                      <RotateCcw className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  {creativeTemplates.map((template) => (
+                    <div
+                      key={template.id}
+                      className="rounded-xl border border-slate-200 bg-white transition hover:border-cyan-200 hover:bg-cyan-50/60"
+                    >
+                      <button className="w-full p-3 text-left" onClick={() => applyCreativeTemplate(template)}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-slate-900">{template.title}</span>
+                          <span className="rounded-md bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-700">
+                            {template.category}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-[10px] font-medium text-slate-400">
+                          <span>{template.mode === "generate" ? "文生图" : template.mode === "edit" ? "图生图" : "通用"}</span>
+                          {template.builtin ? <span>默认</span> : <span>自定义</span>}
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                          {template.description || template.prompt}
+                        </p>
+                      </button>
+                      <div className="flex items-center gap-2 px-3 pb-3">
+                        <button
+                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-600 transition hover:border-cyan-200 hover:text-cyan-700"
+                          onClick={() => openEditTemplate(template)}
+                        >
+                          <Pencil className="size-3.5" />
+                          编辑
+                        </button>
+                        {!template.builtin ? (
+                          <button
+                            className="inline-flex h-7 items-center gap-1 rounded-lg border border-rose-100 bg-rose-50 px-2 text-xs font-medium text-rose-600 transition hover:border-rose-200 hover:bg-rose-100"
+                            onClick={() => handleDeleteTemplate(template)}
+                          >
+                            <Trash2 className="size-3.5" />
+                            删除
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
                   <div className="text-xs font-medium text-slate-500">风格预设</div>
                   <div className="flex items-center gap-1">
                     <button
@@ -2089,6 +2412,82 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           </div>
         </aside>
       </section>
+
+      <Dialog open={isTemplateEditorOpen} onOpenChange={setIsTemplateEditorOpen}>
+        <DialogContent className="w-[92vw] max-w-[620px] rounded-2xl border-slate-200 bg-white p-6 shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-950">
+              <Sparkles className="size-5 text-cyan-700" />
+              {editingTemplate ? "编辑创作模板" : "新增创作模板"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px_120px]">
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">模板名称</span>
+                <input
+                  className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                  value={templateTitle}
+                  onChange={(event) => setTemplateTitle(event.target.value)}
+                  placeholder="例如：企业官网首屏"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">分类</span>
+                <input
+                  className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                  value={templateCategory}
+                  onChange={(event) => setTemplateCategory(event.target.value)}
+                  placeholder="UI"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">模式</span>
+                <select
+                  className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                  value={templateMode}
+                  onChange={(event) => setTemplateMode(event.target.value as CreativeTemplate["mode"])}
+                >
+                  <option value="generate">文生图</option>
+                  <option value="edit">图生图</option>
+                  <option value="any">通用</option>
+                </select>
+              </label>
+            </div>
+            <label className="block">
+              <span className="text-xs font-medium text-slate-500">用途说明</span>
+              <input
+                className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                value={templateDescription}
+                onChange={(event) => setTemplateDescription(event.target.value)}
+                placeholder="显示在模板卡片上的一句话说明"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-slate-500">完整提示词模板</span>
+              <textarea
+                className="mt-1 min-h-40 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm leading-6 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                value={templatePrompt}
+                onChange={(event) => setTemplatePrompt(event.target.value)}
+                placeholder="写下可直接套用的提示词结构，用户后续可以在输入框里继续补充要求..."
+              />
+            </label>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl border-slate-200 bg-white text-slate-700"
+              onClick={() => setIsTemplateEditorOpen(false)}
+            >
+              取消
+            </Button>
+            <Button className="h-10 rounded-xl bg-slate-950 text-white hover:bg-slate-800" onClick={handleSaveTemplate}>
+              <Save className="size-4" />
+              保存
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isPresetEditorOpen} onOpenChange={setIsPresetEditorOpen}>
         <DialogContent className="w-[92vw] max-w-[560px] rounded-2xl border-slate-200 bg-white p-6 shadow-2xl">

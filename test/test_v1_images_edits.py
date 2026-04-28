@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import unittest
 from pathlib import Path
@@ -9,6 +10,9 @@ import requests
 
 from test.utils import save_image
 from utils.log import logger
+
+if os.getenv("RUN_INTEGRATION_TESTS") != "1":
+    raise unittest.SkipTest("set RUN_INTEGRATION_TESTS=1 to run localhost integration tests")
 
 AUTH_KEY = "gpt-image"
 BASE_URL = "http://localhost:8000"

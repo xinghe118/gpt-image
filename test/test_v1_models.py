@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 
 import requests
 
 from services.chatgpt_service import ChatGPTService
+
+if os.getenv("RUN_INTEGRATION_TESTS") != "1":
+    raise unittest.SkipTest("set RUN_INTEGRATION_TESTS=1 to run localhost integration tests")
 
 
 AUTH_KEY = "gpt-image"

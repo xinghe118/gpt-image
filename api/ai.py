@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+import base64
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -66,6 +67,7 @@ class ImageJobService:
     def _restore_persisted_jobs(self) -> None:
         for job in app_data_store.load_image_jobs(300, include_all=True):
             if job.get("status") in {"pending", "running"}:
+                retryable = isinstance(job.get("payload"), dict)
                 now = self._now_iso()
                 job = {
                     **job,
@@ -73,7 +75,7 @@ class ImageJobService:
                     "updated_at": now,
                     "finished_at": job.get("finished_at") or now,
                     "error": "任务在服务重启时中断，请重新提交或重试。",
-                    "retryable": False,
+                    "retryable": retryable,
                 }
                 app_data_store.save_image_job(job)
             if isinstance(job.get("job_id"), str):
@@ -86,6 +88,7 @@ class ImageJobService:
             task: Callable[[], dict[str, object]],
             kind: str,
             metadata: dict[str, object] | None = None,
+            payload: dict[str, object] | None = None,
     ) -> dict[str, object]:
         job_id = uuid.uuid4().hex
         now = self._now_iso()
@@ -104,6 +107,16 @@ class ImageJobService:
             "result": None,
             "error": "",
             "metadata": metadata or {},
+            "payload": payload or {},
+            "identity": {
+                "id": str(identity.get("id") or ""),
+                "name": str(identity.get("name") or ""),
+                "role": str(identity.get("role") or ""),
+                "plan": str(identity.get("plan") or ""),
+                "quota_limit": identity.get("quota_limit"),
+                "quota_used": identity.get("quota_used"),
+                "quota_remaining": identity.get("quota_remaining"),
+            },
         }
         with self._lock:
             self._jobs[job_id] = job
@@ -157,7 +170,12 @@ class ImageJobService:
         subject_id = str(identity.get("id") or "")
         return app_data_store.load_image_jobs(limit, subject_id=subject_id, include_all=include_all)
 
-    def retry(self, job_id: str, identity: dict[str, object]) -> dict[str, object] | None:
+    def retry(
+            self,
+            job_id: str,
+            identity: dict[str, object],
+            task_builder: Callable[[dict[str, object]], Callable[[], dict[str, object]] | None] | None = None,
+    ) -> dict[str, object] | None:
         with self._lock:
             job = self._jobs.get(job_id)
             task = self._tasks.get(job_id)
@@ -166,6 +184,10 @@ class ImageJobService:
                 if stored:
                     job = stored
                     self._jobs[job_id] = stored
+            if job and not task and task_builder is not None:
+                task = task_builder(job)
+                if task is not None:
+                    self._tasks[job_id] = task
             if not job or not task:
                 return None
             if identity.get("role") != "admin" and str(job.get("subject_id") or "") != str(identity.get("id") or ""):
@@ -190,6 +212,40 @@ class ImageJobService:
 
 
 image_job_service = ImageJobService()
+
+
+def _encode_job_images(images: list[tuple[bytes, str, str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "data": base64.b64encode(image_data).decode("ascii"),
+            "filename": filename,
+            "content_type": content_type,
+        }
+        for image_data, filename, content_type in images
+    ]
+
+
+def _decode_job_images(items: object) -> list[tuple[bytes, str, str]]:
+    if not isinstance(items, list):
+        return []
+    images: list[tuple[bytes, str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        data = str(item.get("data") or "")
+        try:
+            image_data = base64.b64decode(data)
+        except Exception:
+            continue
+        if image_data:
+            images.append(
+                (
+                    image_data,
+                    str(item.get("filename") or "image.png"),
+                    str(item.get("content_type") or "image/png"),
+                )
+            )
+    return images
 
 
 def _normalize_image_amount(value: object, default: int = 1) -> int:
@@ -492,6 +548,16 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 "response_format": body.response_format,
                 "prompt_preview": body.prompt[:220],
             },
+            payload={
+                "kind": "images.generations",
+                "prompt": body.prompt,
+                "model": body.model,
+                "n": body.n,
+                "size": body.size,
+                "response_format": body.response_format,
+                "base_url": base_url,
+                "project_id": body.project_id,
+            },
             task=lambda: _run_generation_request(
                 chatgpt_service=chatgpt_service,
                 identity=identity,
@@ -638,6 +704,17 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 "image_count": len(images),
                 "prompt_preview": prompt[:220],
             },
+            payload={
+                "kind": "images.edits",
+                "prompt": prompt,
+                "model": model,
+                "n": n,
+                "size": size,
+                "response_format": response_format,
+                "base_url": base_url,
+                "project_id": project_id,
+                "images": _encode_job_images(images),
+            },
             task=lambda: _run_edit_request(
                 chatgpt_service=chatgpt_service,
                 identity=identity,
@@ -673,8 +750,53 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
     @router.post("/api/image/jobs/{job_id}/retry")
     async def retry_image_job(job_id: str, authorization: str | None = Header(default=None)):
         identity = require_identity(authorization)
+
+        def build_retry_task(job: dict[str, object]) -> Callable[[], dict[str, object]] | None:
+            payload = job.get("payload")
+            if not isinstance(payload, dict):
+                return None
+            job_identity = job.get("identity")
+            run_identity = job_identity if isinstance(job_identity, dict) and job_identity.get("id") else identity
+            base_url = str(payload.get("base_url") or "").strip()
+            if not base_url:
+                return None
+            kind = str(payload.get("kind") or job.get("kind") or "")
+            if kind == "images.generations":
+                return lambda: _run_generation_request(
+                    chatgpt_service=chatgpt_service,
+                    identity=run_identity,
+                    prompt=str(payload.get("prompt") or ""),
+                    model=str(payload.get("model") or "gpt-image-2"),
+                    n=int(payload.get("n") or 1),
+                    size=str(payload.get("size") or "") or None,
+                    response_format=str(payload.get("response_format") or "url"),
+                    base_url=base_url,
+                    started_at=time.perf_counter(),
+                    project_id=str(payload.get("project_id") or "") or None,
+                    wait_for_slot=True,
+                )
+            if kind == "images.edits":
+                images = _decode_job_images(payload.get("images"))
+                if not images:
+                    return None
+                return lambda: _run_edit_request(
+                    chatgpt_service=chatgpt_service,
+                    identity=run_identity,
+                    prompt=str(payload.get("prompt") or ""),
+                    images=images,
+                    model=str(payload.get("model") or "gpt-image-2"),
+                    n=int(payload.get("n") or 1),
+                    size=str(payload.get("size") or "") or None,
+                    response_format=str(payload.get("response_format") or "url"),
+                    base_url=base_url,
+                    started_at=time.perf_counter(),
+                    project_id=str(payload.get("project_id") or "") or None,
+                    wait_for_slot=True,
+                )
+            return None
+
         try:
-            job = image_job_service.retry(job_id, identity)
+            job = image_job_service.retry(job_id, identity, build_retry_task)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
         except ValueError as exc:

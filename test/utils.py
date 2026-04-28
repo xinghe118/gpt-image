@@ -13,6 +13,12 @@ BASE_URL = "http://127.0.0.1:8000"
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+# unittest discovery imports this file as top-level "utils", which otherwise
+# hides the real project package at ROOT_DIR/utils.
+__path__ = [str(ROOT_DIR / "utils")]
+if __spec__ is not None:
+    __spec__.submodule_search_locations = __path__
+
 
 def load_auth_key() -> str:
     return json.loads((ROOT_DIR / "config.json").read_text(encoding="utf-8"))["auth-key"]

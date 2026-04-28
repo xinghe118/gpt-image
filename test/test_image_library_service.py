@@ -11,12 +11,25 @@ class FakeStore:
     def __init__(self):
         self.document = {"items": []}
 
+    @property
+    def database_enabled(self):
+        return False
+
     def load_document(self, name, default):
         return self.document if name == "library" else default
 
     def save_document(self, name, data):
         if name == "library":
             self.document = data
+
+    def load_library(self):
+        return list(self.document.get("items", []))
+
+    def save_library(self, items):
+        self.document = {"items": list(items)}
+
+    def list_library_page(self, **kwargs):
+        return None
 
 
 class ImageLibraryServiceTests(unittest.TestCase):

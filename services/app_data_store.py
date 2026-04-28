@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from sqlalchemy import Column, Integer, String, Text, create_engine, or_, text
+from sqlalchemy import Column, Integer, String, Text, create_engine, inspect, or_, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -59,6 +59,8 @@ class ImageLibraryDataModel(Base):
     id = Column(String(80), primary_key=True)
     subject_id = Column(String(120), nullable=False, index=True)
     project_id = Column(String(80), nullable=False, index=True)
+    mode = Column(String(40), nullable=False, default="", index=True)
+    model = Column(String(80), nullable=False, default="", index=True)
     created_at = Column(String(40), nullable=False, index=True)
     data = Column(Text, nullable=False)
 
@@ -106,6 +108,7 @@ class AppDataStore:
         if self._database_enabled:
             self._engine = create_engine(_database_url(), pool_pre_ping=True, pool_recycle=3600)
             Base.metadata.create_all(self._engine)
+            self._ensure_schema()
             self._session_factory = sessionmaker(bind=self._engine)
 
     @property
@@ -116,6 +119,22 @@ class AppDataStore:
         if not self._session_factory:
             raise RuntimeError("database app data store is not enabled")
         return self._session_factory()
+
+    def _ensure_schema(self) -> None:
+        if self._engine is None:
+            return
+        inspector = inspect(self._engine)
+        columns = {column["name"] for column in inspector.get_columns("image_library")}
+        statements = []
+        if "mode" not in columns:
+            statements.append("ALTER TABLE image_library ADD COLUMN mode VARCHAR(40) DEFAULT ''")
+        if "model" not in columns:
+            statements.append("ALTER TABLE image_library ADD COLUMN model VARCHAR(80) DEFAULT ''")
+        if not statements:
+            return
+        with self._engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
 
     def load_document(self, key: str, default: Any) -> Any:
         if not self._database_enabled:
@@ -195,19 +214,24 @@ class AppDataStore:
             return
         session = self._session()
         try:
-            session.query(ProjectDataModel).delete()
             for item in items:
                 item_id = self._clean(item.get("id"))
                 if not item_id:
                     continue
-                session.add(
-                    ProjectDataModel(
+                row = session.get(ProjectDataModel, item_id)
+                payload = json.dumps(item, ensure_ascii=False)
+                if row is None:
+                    row = ProjectDataModel(
                         id=item_id,
                         subject_id=self._clean(item.get("subject_id")) or "anonymous",
                         updated_at=self._clean(item.get("updated_at")) or self._clean(item.get("created_at")),
-                        data=json.dumps(item, ensure_ascii=False),
+                        data=payload,
                     )
-                )
+                    session.add(row)
+                else:
+                    row.subject_id = self._clean(item.get("subject_id")) or row.subject_id
+                    row.updated_at = self._clean(item.get("updated_at")) or self._clean(item.get("created_at")) or row.updated_at
+                    row.data = payload
             session.commit()
         except Exception:
             session.rollback()
@@ -232,20 +256,28 @@ class AppDataStore:
             return
         session = self._session()
         try:
-            session.query(ConversationDataModel).delete()
             for item in items:
                 item_id = self._clean(item.get("id"))
                 if not item_id:
                     continue
-                session.add(
-                    ConversationDataModel(
+                row = session.get(ConversationDataModel, item_id)
+                payload = json.dumps(item, ensure_ascii=False)
+                project_id = self._clean(item.get("project_id") or item.get("projectId")) or "default"
+                updated_at = self._clean(item.get("updatedAt") or item.get("updated_at") or item.get("createdAt"))
+                if row is None:
+                    row = ConversationDataModel(
                         id=item_id,
                         subject_id=self._clean(item.get("subject_id")) or "anonymous",
-                        project_id=self._clean(item.get("project_id") or item.get("projectId")) or "default",
-                        updated_at=self._clean(item.get("updatedAt") or item.get("updated_at") or item.get("createdAt")),
-                        data=json.dumps(item, ensure_ascii=False),
+                        project_id=project_id,
+                        updated_at=updated_at,
+                        data=payload,
                     )
-                )
+                    session.add(row)
+                else:
+                    row.subject_id = self._clean(item.get("subject_id")) or row.subject_id
+                    row.project_id = project_id
+                    row.updated_at = updated_at or row.updated_at
+                    row.data = payload
             session.commit()
         except Exception:
             session.rollback()
@@ -292,7 +324,12 @@ class AppDataStore:
             if normalized_project_id:
                 db_query = db_query.filter(ImageLibraryDataModel.project_id == normalized_project_id)
             if normalized_mode:
-                db_query = db_query.filter(ImageLibraryDataModel.data.ilike(f'%"mode": "{normalized_mode}"%'))
+                db_query = db_query.filter(
+                    or_(
+                        ImageLibraryDataModel.mode == normalized_mode,
+                        ImageLibraryDataModel.data.ilike(f'%"mode": "{normalized_mode}"%'),
+                    )
+                )
             if normalized_query:
                 like = f"%{normalized_query}%"
                 db_query = db_query.filter(
@@ -300,6 +337,7 @@ class AppDataStore:
                         ImageLibraryDataModel.data.ilike(like),
                         ImageLibraryDataModel.subject_id.ilike(like),
                         ImageLibraryDataModel.project_id.ilike(like),
+                        ImageLibraryDataModel.model.ilike(like),
                     )
                 )
             total = db_query.count()
@@ -320,21 +358,51 @@ class AppDataStore:
             return
         session = self._session()
         try:
-            session.query(ImageLibraryDataModel).delete()
             for item in items:
                 item_id = self._clean(item.get("id"))
                 if not item_id:
                     continue
-                session.add(
-                    ImageLibraryDataModel(
+                row = session.get(ImageLibraryDataModel, item_id)
+                payload = json.dumps(item, ensure_ascii=False)
+                project_id = self._clean(item.get("project_id")) or "default"
+                mode = self._clean(item.get("mode")).lower()
+                model = self._clean(item.get("model"))
+                created_at = self._clean(item.get("created_at"))
+                if row is None:
+                    row = ImageLibraryDataModel(
                         id=item_id,
                         subject_id=self._clean(item.get("subject_id")) or "anonymous",
-                        project_id=self._clean(item.get("project_id")) or "default",
-                        created_at=self._clean(item.get("created_at")),
-                        data=json.dumps(item, ensure_ascii=False),
+                        project_id=project_id,
+                        mode=mode,
+                        model=model,
+                        created_at=created_at,
+                        data=payload,
                     )
-                )
+                    session.add(row)
+                else:
+                    row.subject_id = self._clean(item.get("subject_id")) or row.subject_id
+                    row.project_id = project_id
+                    row.mode = mode
+                    row.model = model
+                    row.created_at = created_at or row.created_at
+                    row.data = payload
             session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        conversation_id = self._clean(conversation_id)
+        if not conversation_id or not self._database_enabled:
+            return
+        session = self._session()
+        try:
+            row = session.get(ConversationDataModel, conversation_id)
+            if row is not None:
+                session.delete(row)
+                session.commit()
         except Exception:
             session.rollback()
             raise

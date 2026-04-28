@@ -154,6 +154,7 @@ class ConversationService:
                 deleted = True
             if deleted:
                 self._save(next_items)
+                app_data_store.delete_conversation(normalized_id)
         return deleted
 
     def move_conversation(self, identity: dict[str, object], conversation_id: str, project_id: str) -> dict[str, Any] | None:

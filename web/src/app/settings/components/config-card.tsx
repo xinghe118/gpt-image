@@ -195,6 +195,49 @@ export function ConfigCard() {
               />
             </button>
           </div>
+          <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 md:col-span-3">
+            <div>
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <ServerCog className="size-4 text-slate-400" />
+                生图并发控制
+              </label>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                用于保护 VPS、账号池和上游接口；填 0 表示不限制。
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">全局最大并发</span>
+                <Input
+                  type="number"
+                  min={0}
+                  value={String(config?.image_max_concurrent_requests ?? 5)}
+                  onChange={(event) => setConfigValue("image_max_concurrent_requests", event.target.value)}
+                  className="mt-1 h-10 rounded-lg border-slate-200 bg-white"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">单用户最大并发</span>
+                <Input
+                  type="number"
+                  min={0}
+                  value={String(config?.image_max_concurrent_per_user ?? 2)}
+                  onChange={(event) => setConfigValue("image_max_concurrent_per_user", event.target.value)}
+                  className="mt-1 h-10 rounded-lg border-slate-200 bg-white"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">账号冷却秒数</span>
+                <Input
+                  type="number"
+                  min={0}
+                  value={String(config?.image_account_cooldown_seconds ?? 3)}
+                  onChange={(event) => setConfigValue("image_account_cooldown_seconds", event.target.value)}
+                  className="mt-1 h-10 rounded-lg border-slate-200 bg-white"
+                />
+              </label>
+            </div>
+          </div>
         </div>
 
         <div className="flex justify-end">

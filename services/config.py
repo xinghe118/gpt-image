@@ -38,6 +38,17 @@ def _as_bool(value: object, default: bool = False) -> bool:
     return bool(value)
 
 
+def _as_int(value: object, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    number = max(minimum, number)
+    if maximum is not None:
+        number = min(maximum, number)
+    return number
+
+
 def _read_json_object(path: Path, *, name: str) -> dict[str, object]:
     if not path.exists():
         return {}
@@ -150,6 +161,18 @@ class ConfigStore:
     def upstream_image_channels_enabled(self) -> bool:
         return _as_bool(self.data.get("upstream_image_channels_enabled"), True)
 
+    @property
+    def image_max_concurrent_requests(self) -> int:
+        return _as_int(self.data.get("image_max_concurrent_requests"), 5, minimum=0, maximum=100)
+
+    @property
+    def image_max_concurrent_per_user(self) -> int:
+        return _as_int(self.data.get("image_max_concurrent_per_user"), 2, minimum=0, maximum=50)
+
+    @property
+    def image_account_cooldown_seconds(self) -> int:
+        return _as_int(self.data.get("image_account_cooldown_seconds"), 3, minimum=0, maximum=3600)
+
     def object_storage_config(self) -> dict[str, Any]:
         return {
             "enabled": _as_bool(self.data.get("object_storage_enabled"), False),
@@ -182,6 +205,9 @@ class ConfigStore:
         object_storage = self.public_object_storage_config()
         data.setdefault("show_image_model_selector", self.show_image_model_selector)
         data.setdefault("upstream_image_channels_enabled", self.upstream_image_channels_enabled)
+        data.setdefault("image_max_concurrent_requests", self.image_max_concurrent_requests)
+        data.setdefault("image_max_concurrent_per_user", self.image_max_concurrent_per_user)
+        data.setdefault("image_account_cooldown_seconds", self.image_account_cooldown_seconds)
         data.setdefault("object_storage_enabled", object_storage["enabled"])
         data.setdefault("object_storage_endpoint", object_storage["endpoint"])
         data.setdefault("object_storage_bucket", object_storage["bucket"])

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import base64
 import hashlib
 import json
+import time
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -35,6 +36,7 @@ class AccountService:
         self._lock = Lock()
         self._index = 0
         self._accounts = self._load_accounts()
+        self._token_last_picked_at: dict[str, float] = {}
 
     @staticmethod
     def _clean_token(value: Any) -> str:
@@ -256,14 +258,23 @@ class AccountService:
         self,
         excluded_tokens: set[str] | None = None,
         capability: str = "image_generation",
+        respect_cooldown: bool = True,
     ) -> list[str]:
         excluded = {self._clean_token(token) for token in (excluded_tokens or set()) if self._clean_token(token)}
+        now = time.monotonic()
+        cooldown_seconds = config.image_account_cooldown_seconds
         return [
             token
             for item in self._accounts
             if self._is_image_account_available(item, capability=capability)
                and (token := self._clean_token(item.get("access_token")))
                and token not in excluded
+               and (
+                   not respect_cooldown
+                   or
+                   cooldown_seconds <= 0
+                   or now - self._token_last_picked_at.get(token, 0.0) >= cooldown_seconds
+               )
         ]
 
     def _pick_next_candidate_token(
@@ -274,9 +285,17 @@ class AccountService:
         with self._lock:
             tokens = self._list_available_candidate_tokens(excluded_tokens, capability=capability)
             if not tokens:
+                cooling_tokens = self._list_available_candidate_tokens(
+                    excluded_tokens,
+                    capability=capability,
+                    respect_cooldown=False,
+                )
+                if cooling_tokens and config.image_account_cooldown_seconds > 0:
+                    raise RuntimeError("all image accounts are cooling down")
                 raise RuntimeError("no available image quota")
             access_token = tokens[self._index % len(tokens)]
             self._index += 1
+            self._token_last_picked_at[access_token] = time.monotonic()
             return access_token
 
     def refresh_account_state(self, access_token: str) -> dict | None:
@@ -299,8 +318,18 @@ class AccountService:
 
     def get_available_access_token(self, capability: str = "image_generation") -> str:
         attempted_tokens: set[str] = set()
+        cooldown_deadline = time.monotonic() + max(10, config.image_account_cooldown_seconds + 5)
         while True:
-            access_token = self._pick_next_candidate_token(excluded_tokens=attempted_tokens, capability=capability)
+            try:
+                access_token = self._pick_next_candidate_token(excluded_tokens=attempted_tokens, capability=capability)
+            except RuntimeError as exc:
+                if (
+                    str(exc) == "all image accounts are cooling down"
+                    and time.monotonic() < cooldown_deadline
+                ):
+                    time.sleep(min(1.0, max(0.1, config.image_account_cooldown_seconds)))
+                    continue
+                raise
             attempted_tokens.add(access_token)
             token_ref = anonymize_token(access_token)
             account = self.refresh_account_state(access_token)

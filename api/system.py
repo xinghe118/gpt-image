@@ -9,6 +9,7 @@ from services.activity_log_service import activity_log_service
 from services.app_data_store import app_data_store
 from services.config import DATA_DIR, config
 from services.image_library_service import image_library_service
+from services.image_concurrency_service import image_concurrency_service
 from services.object_storage_service import object_storage_service
 from services.proxy_service import test_proxy
 from services.quota_ledger_service import quota_ledger_service
@@ -73,6 +74,11 @@ def create_router(app_version: str) -> APIRouter:
             "show_image_model_selector": config.show_image_model_selector,
             "default_image_model": config.default_image_model,
         }
+
+    @router.get("/api/concurrency/status")
+    async def get_concurrency_status(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        return {"status": image_concurrency_service.snapshot()}
 
     @router.get("/version")
     async def get_version():

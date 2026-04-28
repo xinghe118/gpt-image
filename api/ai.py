@@ -17,6 +17,7 @@ from services.activity_log_service import activity_log_service
 from services.auth_service import auth_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
 from services.image_library_service import image_library_service
+from services.image_concurrency_service import ImageConcurrencyLimitError, image_concurrency_service
 from services.quota_ledger_service import quota_ledger_service
 from utils.helper import is_image_chat_request, sse_json_stream
 
@@ -204,9 +205,11 @@ def _run_generation_request(
         base_url: str,
         started_at: float,
         project_id: str | None = None,
+        wait_for_slot: bool = False,
 ) -> dict[str, object]:
     try:
-        result = chatgpt_service.generate_with_pool(prompt, model, n, size, "b64_json", base_url)
+        with image_concurrency_service.acquire(identity, wait=wait_for_slot):
+            result = chatgpt_service.generate_with_pool(prompt, model, n, size, "b64_json", base_url)
         result_count = len(result.get("data") or [])
         records: list[dict[str, object]] = []
         if result_count > 0:
@@ -255,6 +258,21 @@ def _run_generation_request(
             metadata={"stream": False, "n": n, "size": size},
         )
         raise exc
+    except ImageConcurrencyLimitError as exc:
+        activity_log_service.record(
+            "images.generations",
+            level="warning",
+            status="error",
+            route="/v1/images/generations",
+            model=model,
+            subject_id=str(identity.get("id") or ""),
+            role=str(identity.get("role") or ""),
+            prompt=prompt,
+            duration_ms=int((time.perf_counter() - started_at) * 1000),
+            error=str(exc),
+            metadata={"stream": False, "n": n, "size": size, "limit": "concurrency"},
+        )
+        raise exc
 
 
 def _run_edit_request(
@@ -270,9 +288,11 @@ def _run_edit_request(
         base_url: str,
         started_at: float,
         project_id: str | None = None,
+        wait_for_slot: bool = False,
 ) -> dict[str, object]:
     try:
-        result = chatgpt_service.edit_with_pool(prompt, images, model, n, size, "b64_json", base_url)
+        with image_concurrency_service.acquire(identity, wait=wait_for_slot):
+            result = chatgpt_service.edit_with_pool(prompt, images, model, n, size, "b64_json", base_url)
         result_count = len(result.get("data") or [])
         records: list[dict[str, object]] = []
         if result_count > 0:
@@ -319,6 +339,21 @@ def _run_edit_request(
             duration_ms=int((time.perf_counter() - started_at) * 1000),
             error=str(exc),
             metadata={"stream": False, "n": n, "size": size, "image_count": len(images)},
+        )
+        raise exc
+    except ImageConcurrencyLimitError as exc:
+        activity_log_service.record(
+            "images.edits",
+            level="warning",
+            status="error",
+            route="/v1/images/edits",
+            model=model,
+            subject_id=str(identity.get("id") or ""),
+            role=str(identity.get("role") or ""),
+            prompt=prompt,
+            duration_ms=int((time.perf_counter() - started_at) * 1000),
+            error=str(exc),
+            metadata={"stream": False, "n": n, "size": size, "limit": "concurrency"},
         )
         raise exc
 
@@ -413,6 +448,8 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)
+        except ImageConcurrencyLimitError as exc:
+            raise HTTPException(status_code=429, detail={"error": str(exc)}) from exc
 
     @router.post("/api/image/jobs/generations")
     async def create_image_generation_job(
@@ -441,6 +478,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 base_url=base_url,
                 started_at=started_at,
                 project_id=body.project_id,
+                wait_for_slot=True,
             ),
         )
         return {"job": job}
@@ -538,6 +576,8 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)
+        except ImageConcurrencyLimitError as exc:
+            raise HTTPException(status_code=429, detail={"error": str(exc)}) from exc
 
     @router.post("/api/image/jobs/edits")
     async def create_image_edit_job(
@@ -585,6 +625,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 base_url=base_url,
                 started_at=started_at,
                 project_id=project_id,
+                wait_for_slot=True,
             ),
         )
         return {"job": job}

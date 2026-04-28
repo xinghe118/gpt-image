@@ -62,6 +62,9 @@ export type SettingsConfig = {
   refresh_account_interval_minute?: number | string;
   show_image_model_selector?: boolean;
   upstream_image_channels_enabled?: boolean;
+  image_max_concurrent_requests?: number | string;
+  image_max_concurrent_per_user?: number | string;
+  image_account_cooldown_seconds?: number | string;
   object_storage_enabled?: boolean;
   object_storage_endpoint?: string;
   object_storage_bucket?: string;

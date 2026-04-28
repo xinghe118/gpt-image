@@ -32,6 +32,7 @@ import {
   type ImageModel,
   type ProjectItem,
 } from "@/lib/api";
+import { toFriendlyErrorMessage } from "@/lib/friendly-error";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import {
   deleteImageConversation,
@@ -397,7 +398,7 @@ async function waitForImageJob(jobId: string) {
     }
     if (job.status === "failed") {
       const retryHint = job.retryable ? "，可以重试" : "";
-      throw new Error(job.error || `生成失败${retryHint}`);
+      throw new Error(toFriendlyErrorMessage(job.error || `生成失败${retryHint}`));
     }
     await delay(interval);
     interval = Math.min(5000, interval + 500);
@@ -1519,7 +1520,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
             return nextImage;
           } catch (error) {
-            const message = error instanceof Error ? error.message : "生成失败";
+            const message = toFriendlyErrorMessage(error instanceof Error ? error.message : "生成失败");
             const failedImage: StoredImage = {
               id: pendingImage.id,
               status: "error",
@@ -1579,7 +1580,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
         await loadQuota();
       } catch (error) {
-        const message = error instanceof Error ? error.message : "生成图片失败";
+        const message = toFriendlyErrorMessage(error instanceof Error ? error.message : "生成图片失败");
         await updateConversation(conversationId, (current) => {
           const conversation = current ?? snapshot;
           return {

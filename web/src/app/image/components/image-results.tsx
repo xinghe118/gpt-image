@@ -3,6 +3,7 @@
 import { Clock3, LoaderCircle, RotateCcw, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { toFriendlyErrorMessage } from "@/lib/friendly-error";
 import { cn } from "@/lib/utils";
 import type { ImageConversation, ImageTurnStatus, StoredImage, StoredReferenceImage } from "@/store/image-conversations";
 
@@ -185,7 +186,7 @@ export function ImageResults({
                           )}
                         >
                           <div className="flex h-full flex-col items-center justify-center gap-4 px-6 py-8 text-center text-sm leading-6 text-rose-600">
-                            <div>{image.error || "生成失败"}</div>
+                            <div>{toFriendlyErrorMessage(image.error || "生成失败")}</div>
                             <Button
                               variant="outline"
                               size="sm"
@@ -230,7 +231,7 @@ export function ImageResults({
 
                 {turn.status === "error" && turn.error ? (
                   <div className="mt-4 border-l-2 border-amber-300 bg-amber-50/70 px-4 py-3 text-sm leading-6 text-amber-700">
-                    {turn.error}
+                    {toFriendlyErrorMessage(turn.error)}
                   </div>
                 ) : null}
               </div>

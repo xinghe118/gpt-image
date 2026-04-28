@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowLeft, Clock, FolderKanban, ImageIcon, Images, LoaderCircle, MessageSquareText, Settings2, Sparkles } from "lucide-react";
+import { ArrowLeft, Clock, FolderKanban, ImageIcon, Images, LoaderCircle, MessageSquareText, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -35,20 +35,6 @@ function formatTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
-}
-
-function modeLabel(value?: string) {
-  return value === "edit" ? "图生图" : "文生图";
-}
-
-function strengthLabel(value?: string) {
-  if (value === "low") {
-    return "低";
-  }
-  if (value === "high") {
-    return "高";
-  }
-  return "中";
 }
 
 function getInitialProjectId() {
@@ -109,17 +95,6 @@ export default function ProjectDetailPage() {
       cancelled = true;
     };
   }, [isCheckingAuth, projectId, session]);
-
-  const settingsRows = useMemo(() => {
-    const settings = project?.settings;
-    return [
-      ["默认模型", settings?.default_model || "gpt-image-2"],
-      ["默认模式", modeLabel(settings?.default_mode)],
-      ["默认比例", settings?.default_size || "自动"],
-      ["默认张数", String(settings?.default_count || 1)],
-      ["参考强度", strengthLabel(settings?.default_reference_strength)],
-    ];
-  }, [project?.settings]);
 
   const openWorkbench = () => {
     if (typeof window !== "undefined") {
@@ -272,24 +247,6 @@ export default function ProjectDetailPage() {
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center gap-2">
-              <Settings2 className="size-4 text-cyan-700" />
-              <h2 className="text-lg font-semibold text-slate-950">默认创作参数</h2>
-            </div>
-            <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100">
-              {settingsRows.map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                  <span className="text-slate-500">{label}</span>
-                  <span className="truncate font-medium text-slate-950">{value}</span>
-                </div>
-              ))}
-            </div>
-            <Button className="mt-4 w-full rounded-lg bg-slate-950 text-white hover:bg-slate-800" onClick={openWorkbench}>
-              调整参数
-            </Button>
-          </div>
-
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-950">最近会话</h2>
             <div className="mt-3 space-y-2">

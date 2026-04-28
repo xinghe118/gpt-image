@@ -174,6 +174,21 @@ class ImageLibraryService:
         normalized_query = self._clean(query).lower()
         normalized_mode = self._clean(mode).lower()
         normalized_project_id = self._clean(project_id)
+        database_page = app_data_store.list_library_page(
+            subject_id=subject_id,
+            include_all=is_admin,
+            limit=limit,
+            offset=offset,
+            query=normalized_query,
+            mode=normalized_mode,
+            project_id=normalized_project_id,
+        )
+        if database_page is not None:
+            return {
+                **database_page,
+                "items": [self._public_item(item) for item in database_page["items"]],
+            }
+
         with self._lock:
             items = self._load()
             visible_items = items if is_admin else [item for item in items if self._clean(item.get("subject_id")) == subject_id]

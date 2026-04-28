@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Download, Images, LoaderCircle, Pencil, Search, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -61,9 +61,10 @@ export default function LibraryPage() {
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [total, setTotal] = useState(0);
   const pageSize = 48;
 
-  const loadItems = async ({ append = false, modeOverride }: { append?: boolean; modeOverride?: string } = {}) => {
+  const loadItems = useCallback(async ({ append = false, modeOverride }: { append?: boolean; modeOverride?: string } = {}) => {
     if (append) {
       setIsLoadingMore(true);
     } else {
@@ -79,13 +80,14 @@ export default function LibraryPage() {
       });
       setItems((current) => (append ? [...current, ...data.items] : data.items));
       setHasMore(data.has_more);
+      setTotal(Number(data.total || 0));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "读取作品库失败");
     } finally {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  };
+  }, [items.length, mode, projectId, query]);
 
   useEffect(() => {
     if (isCheckingAuth || !session || didLoadRef.current) {
@@ -96,7 +98,7 @@ export default function LibraryPage() {
       .then((data) => setProjects(data.items))
       .catch(() => undefined);
     void loadItems();
-  }, [isCheckingAuth, session]);
+  }, [isCheckingAuth, loadItems, session]);
 
   useEffect(() => {
     setMoveProjectId(selectedItem?.project_id || "default");
@@ -186,6 +188,7 @@ export default function LibraryPage() {
             <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">作品库</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">
               {session.role === "admin" ? "管理员可查看所有用户生成的作品。" : "这里只展示当前用户密钥生成的作品。"}
+              {total > 0 ? ` 当前筛选共 ${total} 张。` : ""}
             </p>
           </div>
           <Button className="h-10 rounded-lg bg-slate-950 text-white hover:bg-slate-800" onClick={() => void loadItems()}>

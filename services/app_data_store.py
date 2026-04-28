@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from sqlalchemy import Column, Integer, String, Text, create_engine, text
+from sqlalchemy import Column, Integer, String, Text, create_engine, or_, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -261,6 +261,56 @@ class AppDataStore:
             rows = session.query(ImageLibraryDataModel).order_by(ImageLibraryDataModel.created_at.desc()).all()
             items = self._decode_row_data(rows)
             return items if items else self._load_collection_document("library")
+        finally:
+            session.close()
+
+    def list_library_page(
+            self,
+            *,
+            subject_id: str = "",
+            include_all: bool = False,
+            limit: int = 48,
+            offset: int = 0,
+            query: str = "",
+            mode: str = "",
+            project_id: str = "",
+    ) -> dict[str, Any] | None:
+        if not self._database_enabled:
+            return None
+
+        limit = max(1, min(100, int(limit or 48)))
+        offset = max(0, int(offset or 0))
+        normalized_subject_id = self._clean(subject_id)
+        normalized_project_id = self._clean(project_id)
+        normalized_mode = self._clean(mode).lower()
+        normalized_query = self._clean(query).lower()
+        session = self._session()
+        try:
+            db_query = session.query(ImageLibraryDataModel)
+            if not include_all:
+                db_query = db_query.filter(ImageLibraryDataModel.subject_id == normalized_subject_id)
+            if normalized_project_id:
+                db_query = db_query.filter(ImageLibraryDataModel.project_id == normalized_project_id)
+            if normalized_mode:
+                db_query = db_query.filter(ImageLibraryDataModel.data.ilike(f'%"mode": "{normalized_mode}"%'))
+            if normalized_query:
+                like = f"%{normalized_query}%"
+                db_query = db_query.filter(
+                    or_(
+                        ImageLibraryDataModel.data.ilike(like),
+                        ImageLibraryDataModel.subject_id.ilike(like),
+                        ImageLibraryDataModel.project_id.ilike(like),
+                    )
+                )
+            total = db_query.count()
+            rows = db_query.order_by(ImageLibraryDataModel.created_at.desc()).offset(offset).limit(limit).all()
+            return {
+                "items": self._decode_row_data(rows),
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total,
+            }
         finally:
             session.close()
 

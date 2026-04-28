@@ -55,6 +55,7 @@ class ImageJobService:
     def __init__(self):
         self._lock = threading.Lock()
         self._jobs: dict[str, dict[str, object]] = {}
+        self._tasks: dict[str, Callable[[], dict[str, object]]] = {}
 
     @staticmethod
     def _now_iso() -> str:
@@ -69,26 +70,41 @@ class ImageJobService:
             "subject_id": str(identity.get("id") or ""),
             "created_at": now,
             "updated_at": now,
+            "started_at": "",
+            "finished_at": "",
+            "attempts": 0,
+            "retryable": False,
             "result": None,
             "error": "",
         }
         with self._lock:
             self._jobs[job_id] = job
+            self._tasks[job_id] = task
             if len(self._jobs) > 300:
                 for old_job_id in list(self._jobs.keys())[:100]:
                     if self._jobs.get(old_job_id, {}).get("status") in {"succeeded", "failed"}:
                         self._jobs.pop(old_job_id, None)
+                        self._tasks.pop(old_job_id, None)
 
         thread = threading.Thread(target=self._run, args=(job_id, task), name=f"image-job-{job_id[:8]}", daemon=True)
         thread.start()
         return self.get(job_id) or job
 
     def _run(self, job_id: str, task: Callable[[], dict[str, object]]) -> None:
-        self._update(job_id, status="running")
+        current = self.get(job_id)
+        attempts = int(current.get("attempts") or 0) + 1 if current else 1
+        self._update(
+            job_id,
+            status="running",
+            started_at=self._now_iso(),
+            finished_at="",
+            retryable=False,
+            attempts=attempts,
+        )
         try:
-            self._update(job_id, status="succeeded", result=task(), error="")
+            self._update(job_id, status="succeeded", result=task(), error="", finished_at=self._now_iso(), retryable=False)
         except Exception as exc:
-            self._update(job_id, status="failed", error=str(exc))
+            self._update(job_id, status="failed", error=str(exc), finished_at=self._now_iso(), retryable=True)
 
     def _update(self, job_id: str, **updates: object) -> None:
         with self._lock:
@@ -101,6 +117,31 @@ class ImageJobService:
         with self._lock:
             job = self._jobs.get(job_id)
             return dict(job) if job else None
+
+    def retry(self, job_id: str, identity: dict[str, object]) -> dict[str, object] | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            task = self._tasks.get(job_id)
+            if not job or not task:
+                return None
+            if identity.get("role") != "admin" and str(job.get("subject_id") or "") != str(identity.get("id") or ""):
+                raise PermissionError("image job permission denied")
+            if job.get("status") != "failed":
+                raise ValueError("only failed image jobs can be retried")
+            now = self._now_iso()
+            self._jobs[job_id] = {
+                **job,
+                "status": "pending",
+                "updated_at": now,
+                "started_at": "",
+                "finished_at": "",
+                "result": None,
+                "error": "",
+                "retryable": False,
+            }
+        thread = threading.Thread(target=self._run, args=(job_id, task), name=f"image-job-retry-{job_id[:8]}", daemon=True)
+        thread.start()
+        return self.get(job_id)
 
 
 image_job_service = ImageJobService()
@@ -556,6 +597,28 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             raise HTTPException(status_code=404, detail={"error": "image job not found"})
         if identity.get("role") != "admin" and str(job.get("subject_id") or "") != str(identity.get("id") or ""):
             raise HTTPException(status_code=403, detail={"error": "image job permission denied"})
+        return {"job": job}
+
+    @router.post("/api/image/jobs/{job_id}/retry")
+    async def retry_image_job(job_id: str, authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        try:
+            job = image_job_service.retry(job_id, identity)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+        if job is None:
+            raise HTTPException(status_code=404, detail={"error": "image job not found or cannot be retried"})
+        activity_log_service.record(
+            event="image.jobs.retry",
+            status="accepted",
+            route=f"/api/image/jobs/{job_id}/retry",
+            role=str(identity.get("role") or ""),
+            subject_id=str(identity.get("id") or ""),
+            prompt=f"retry image job {job_id}",
+            metadata={"job_id": job_id, "attempts": job.get("attempts")},
+        )
         return {"job": job}
 
     @router.post("/v1/chat/completions")

@@ -300,7 +300,8 @@ async function waitForImageJob(jobId: string) {
       return job.result;
     }
     if (job.status === "failed") {
-      throw new Error(job.error || "生成失败");
+      const retryHint = job.retryable ? "，可以重试" : "";
+      throw new Error(job.error || `生成失败${retryHint}`);
     }
     await delay(interval);
     interval = Math.min(5000, interval + 500);

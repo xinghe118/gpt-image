@@ -256,6 +256,10 @@ export type ImageJob = {
   error?: string;
   created_at?: string;
   updated_at?: string;
+  started_at?: string;
+  finished_at?: string;
+  attempts?: number;
+  retryable?: boolean;
 };
 
 export async function generateImage(prompt: string, model?: ImageModel, size?: string) {
@@ -367,6 +371,12 @@ export async function createImageEditJob(files: File | File[], prompt: string, m
 
 export async function fetchImageJob(jobId: string) {
   return httpRequest<{ job: ImageJob }>(`/api/image/jobs/${jobId}`);
+}
+
+export async function retryImageJob(jobId: string) {
+  return httpRequest<{ job: ImageJob }>(`/api/image/jobs/${jobId}/retry`, {
+    method: "POST",
+  });
 }
 
 export async function fetchUIConfig() {

@@ -63,6 +63,18 @@ class ImageLibraryDataModel(Base):
     data = Column(Text, nullable=False)
 
 
+class ImageJobDataModel(Base):
+    __tablename__ = "image_jobs"
+
+    job_id = Column(String(80), primary_key=True)
+    subject_id = Column(String(120), nullable=False, index=True)
+    status = Column(String(20), nullable=False, index=True)
+    kind = Column(String(40), nullable=False, index=True)
+    created_at = Column(String(40), nullable=False, index=True)
+    updated_at = Column(String(40), nullable=False, index=True)
+    data = Column(Text, nullable=False)
+
+
 def _database_url() -> str:
     configured = os.getenv("DATABASE_URL", "").strip()
     if configured:
@@ -279,6 +291,86 @@ class AppDataStore:
         finally:
             session.close()
 
+    def load_image_jobs(self, limit: int = 100, *, subject_id: str = "", include_all: bool = False) -> list[dict[str, Any]]:
+        limit = max(1, min(500, int(limit or 100)))
+        if not self._database_enabled:
+            items = self._load_collection_document("image_jobs")
+            if not include_all:
+                items = [item for item in items if self._clean(item.get("subject_id")) == subject_id]
+            return sorted(items, key=lambda item: self._clean(item.get("updated_at")), reverse=True)[:limit]
+
+        session = self._session()
+        try:
+            query = session.query(ImageJobDataModel)
+            if not include_all:
+                query = query.filter(ImageJobDataModel.subject_id == subject_id)
+            rows = query.order_by(ImageJobDataModel.updated_at.desc()).limit(limit).all()
+            return self._decode_row_data(rows)
+        finally:
+            session.close()
+
+    def load_image_job(self, job_id: str) -> dict[str, Any] | None:
+        job_id = self._clean(job_id)
+        if not job_id:
+            return None
+        if not self._database_enabled:
+            for item in self._load_collection_document("image_jobs"):
+                if self._clean(item.get("job_id")) == job_id:
+                    return item
+            return None
+
+        session = self._session()
+        try:
+            row = session.get(ImageJobDataModel, job_id)
+            if row is None:
+                return None
+            try:
+                data = json.loads(row.data)
+            except Exception:
+                return None
+            return data if isinstance(data, dict) else None
+        finally:
+            session.close()
+
+    def save_image_job(self, item: dict[str, Any]) -> None:
+        job_id = self._clean(item.get("job_id"))
+        if not job_id:
+            return
+        if not self._database_enabled:
+            items = self._load_collection_document("image_jobs")
+            items = [current for current in items if self._clean(current.get("job_id")) != job_id]
+            items.insert(0, item)
+            self.save_document("image_jobs", {"items": items[:500]})
+            return
+
+        session = self._session()
+        try:
+            payload = json.dumps(item, ensure_ascii=False)
+            row = session.get(ImageJobDataModel, job_id)
+            if row is None:
+                row = ImageJobDataModel(
+                    job_id=job_id,
+                    subject_id=self._clean(item.get("subject_id")) or "anonymous",
+                    status=self._clean(item.get("status")) or "pending",
+                    kind=self._clean(item.get("kind")) or "image",
+                    created_at=self._clean(item.get("created_at")),
+                    updated_at=self._clean(item.get("updated_at")) or self._clean(item.get("created_at")),
+                    data=payload,
+                )
+                session.add(row)
+            else:
+                row.subject_id = self._clean(item.get("subject_id")) or row.subject_id
+                row.status = self._clean(item.get("status")) or row.status
+                row.kind = self._clean(item.get("kind")) or row.kind
+                row.updated_at = self._clean(item.get("updated_at")) or row.updated_at
+                row.data = payload
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def project_stats(self, *, subject_id: str = "", include_all: bool = False) -> dict[str, dict[str, Any]]:
         stats: dict[str, dict[str, Any]] = {}
 
@@ -385,6 +477,7 @@ class AppDataStore:
             "projects": 0,
             "conversations": 0,
             "activity_logs": 0,
+            "image_jobs": 0,
             "cpa_config": 0,
             "sub2api_config": 0,
             "backend": "database",
@@ -429,6 +522,13 @@ class AppDataStore:
                         count += 1
                 migrated["activity_logs"] = count
 
+            image_jobs = _read_json(DATA_DIR / "image_jobs.json", {})
+            if isinstance(image_jobs, dict) and isinstance(image_jobs.get("items"), list):
+                for item in image_jobs["items"]:
+                    if isinstance(item, dict):
+                        self.save_image_job(item)
+                        migrated["image_jobs"] = int(migrated["image_jobs"]) + 1
+
         return migrated
 
     def health_check(self) -> dict[str, Any]:
@@ -446,6 +546,7 @@ class AppDataStore:
                     "projects": session.query(ProjectDataModel).count(),
                     "conversations": session.query(ConversationDataModel).count(),
                     "library": session.query(ImageLibraryDataModel).count(),
+                    "image_jobs": session.query(ImageJobDataModel).count(),
                     "activity_logs": session.query(ActivityLogModel).count(),
                 }
             finally:

@@ -254,7 +254,11 @@ export type GeneratedImageData = {
 
 export type ImageJob = {
   job_id: string;
+  kind?: string;
   status: "pending" | "running" | "succeeded" | "failed";
+  subject_id?: string;
+  role?: string;
+  metadata?: Record<string, unknown>;
   result?: { created: number; data: GeneratedImageData[] } | null;
   error?: string;
   created_at?: string;
@@ -374,6 +378,10 @@ export async function createImageEditJob(files: File | File[], prompt: string, m
 
 export async function fetchImageJob(jobId: string) {
   return httpRequest<{ job: ImageJob }>(`/api/image/jobs/${jobId}`);
+}
+
+export async function fetchImageJobs(limit = 100) {
+  return httpRequest<{ items: ImageJob[] }>(`/api/image/jobs?limit=${encodeURIComponent(String(limit))}`);
 }
 
 export async function retryImageJob(jobId: string) {

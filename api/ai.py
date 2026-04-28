@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from api.support import raise_image_quota_error, require_identity, resolve_image_base_url
 from services.account_service import account_service
 from services.activity_log_service import activity_log_service
+from services.app_data_store import app_data_store
 from services.auth_service import auth_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
 from services.image_library_service import image_library_service
@@ -56,18 +57,44 @@ class ImageJobService:
         self._lock = threading.Lock()
         self._jobs: dict[str, dict[str, object]] = {}
         self._tasks: dict[str, Callable[[], dict[str, object]]] = {}
+        self._restore_persisted_jobs()
 
     @staticmethod
     def _now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def create(self, *, identity: dict[str, object], task: Callable[[], dict[str, object]]) -> dict[str, object]:
+    def _restore_persisted_jobs(self) -> None:
+        for job in app_data_store.load_image_jobs(300, include_all=True):
+            if job.get("status") in {"pending", "running"}:
+                now = self._now_iso()
+                job = {
+                    **job,
+                    "status": "failed",
+                    "updated_at": now,
+                    "finished_at": job.get("finished_at") or now,
+                    "error": "任务在服务重启时中断，请重新提交或重试。",
+                    "retryable": False,
+                }
+                app_data_store.save_image_job(job)
+            if isinstance(job.get("job_id"), str):
+                self._jobs[str(job["job_id"])] = job
+
+    def create(
+            self,
+            *,
+            identity: dict[str, object],
+            task: Callable[[], dict[str, object]],
+            kind: str,
+            metadata: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         job_id = uuid.uuid4().hex
         now = self._now_iso()
         job = {
             "job_id": job_id,
+            "kind": kind,
             "status": "pending",
             "subject_id": str(identity.get("id") or ""),
+            "role": str(identity.get("role") or ""),
             "created_at": now,
             "updated_at": now,
             "started_at": "",
@@ -76,10 +103,12 @@ class ImageJobService:
             "retryable": False,
             "result": None,
             "error": "",
+            "metadata": metadata or {},
         }
         with self._lock:
             self._jobs[job_id] = job
             self._tasks[job_id] = task
+            app_data_store.save_image_job(job)
             if len(self._jobs) > 300:
                 for old_job_id in list(self._jobs.keys())[:100]:
                     if self._jobs.get(old_job_id, {}).get("status") in {"succeeded", "failed"}:
@@ -111,17 +140,32 @@ class ImageJobService:
             current = self._jobs.get(job_id)
             if not current:
                 return
-            self._jobs[job_id] = {**current, **updates, "updated_at": self._now_iso()}
+            updated = {**current, **updates, "updated_at": self._now_iso()}
+            self._jobs[job_id] = updated
+            app_data_store.save_image_job(updated)
 
     def get(self, job_id: str) -> dict[str, object] | None:
         with self._lock:
             job = self._jobs.get(job_id)
-            return dict(job) if job else None
+        if job:
+            return dict(job)
+        stored = app_data_store.load_image_job(job_id)
+        return dict(stored) if stored else None
+
+    def list(self, identity: dict[str, object], limit: int = 100) -> list[dict[str, object]]:
+        include_all = identity.get("role") == "admin"
+        subject_id = str(identity.get("id") or "")
+        return app_data_store.load_image_jobs(limit, subject_id=subject_id, include_all=include_all)
 
     def retry(self, job_id: str, identity: dict[str, object]) -> dict[str, object] | None:
         with self._lock:
             job = self._jobs.get(job_id)
             task = self._tasks.get(job_id)
+            if not job:
+                stored = app_data_store.load_image_job(job_id)
+                if stored:
+                    job = stored
+                    self._jobs[job_id] = stored
             if not job or not task:
                 return None
             if identity.get("role") != "admin" and str(job.get("subject_id") or "") != str(identity.get("id") or ""):
@@ -139,6 +183,7 @@ class ImageJobService:
                 "error": "",
                 "retryable": False,
             }
+            app_data_store.save_image_job(self._jobs[job_id])
         thread = threading.Thread(target=self._run, args=(job_id, task), name=f"image-job-retry-{job_id[:8]}", daemon=True)
         thread.start()
         return self.get(job_id)
@@ -437,6 +482,16 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             raise HTTPException(status_code=429, detail={"error": str(exc)}) from exc
         job = image_job_service.create(
             identity=identity,
+            kind="images.generations",
+            metadata={
+                "route": "/v1/images/generations",
+                "model": body.model,
+                "n": body.n,
+                "size": body.size or "auto",
+                "project_id": body.project_id or "default",
+                "response_format": body.response_format,
+                "prompt_preview": body.prompt[:220],
+            },
             task=lambda: _run_generation_request(
                 chatgpt_service=chatgpt_service,
                 identity=identity,
@@ -572,6 +627,17 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             images.append((image_data, upload.filename or "image.png", upload.content_type or "image/png"))
         job = image_job_service.create(
             identity=identity,
+            kind="images.edits",
+            metadata={
+                "route": "/v1/images/edits",
+                "model": model,
+                "n": n,
+                "size": size or "auto",
+                "project_id": project_id or "default",
+                "response_format": response_format,
+                "image_count": len(images),
+                "prompt_preview": prompt[:220],
+            },
             task=lambda: _run_edit_request(
                 chatgpt_service=chatgpt_service,
                 identity=identity,
@@ -588,6 +654,11 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             ),
         )
         return {"job": job}
+
+    @router.get("/api/image/jobs")
+    async def list_image_jobs(limit: int = 100, authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        return {"items": image_job_service.list(identity, limit)}
 
     @router.get("/api/image/jobs/{job_id}")
     async def get_image_job(job_id: str, authorization: str | None = Header(default=None)):

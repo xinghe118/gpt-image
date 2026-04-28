@@ -692,6 +692,21 @@ export async function moveLibraryItemToProject(imageId: string, projectId: strin
   });
 }
 
+export async function moveConversationToProject(conversationId: string, projectId: string) {
+  return httpRequest<{
+    item: {
+      id: string;
+      projectId: string;
+      project_id: string;
+      project_name: string;
+      updatedAt: string;
+    };
+  }>(`/api/conversations/${encodeURIComponent(conversationId)}/project`, {
+    method: "POST",
+    body: { project_id: projectId },
+  });
+}
+
 export async function fetchLibraryItems(params: { limit?: number; offset?: number; q?: string; mode?: string; project_id?: string } = {}) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {

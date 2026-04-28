@@ -15,6 +15,10 @@ class ConversationBulkSaveRequest(BaseModel):
     items: list[ConversationPayload] = []
 
 
+class ConversationMoveRequest(BaseModel):
+    project_id: str = ""
+
+
 def create_router() -> APIRouter:
     router = APIRouter()
 
@@ -69,5 +73,22 @@ def create_router() -> APIRouter:
         if not deleted:
             raise HTTPException(status_code=404, detail={"error": "conversation not found"})
         return {"ok": True}
+
+    @router.post("/api/conversations/{conversation_id}/project")
+    async def move_conversation(
+        conversation_id: str,
+        body: ConversationMoveRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        identity = require_identity(authorization)
+        try:
+            item = conversation_service.move_conversation(identity, conversation_id, body.project_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail={"error": "conversation not found"})
+        return {"item": item}
 
     return router

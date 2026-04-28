@@ -7,7 +7,13 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { fetchLibraryItems, fetchProjects, type LibraryImageItem, type ProjectItem } from "@/lib/api";
+import {
+  fetchLibraryItems,
+  fetchProjects,
+  moveConversationToProject,
+  type LibraryImageItem,
+  type ProjectItem,
+} from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 import { listImageConversations, type ImageConversation } from "@/store/image-conversations";
@@ -61,6 +67,8 @@ export default function ProjectDetailPage() {
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [libraryItems, setLibraryItems] = useState<LibraryImageItem[]>([]);
   const [conversations, setConversations] = useState<ImageConversation[]>([]);
+  const [conversationMoveTargets, setConversationMoveTargets] = useState<Record<string, string>>({});
+  const [movingConversationId, setMovingConversationId] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -125,6 +133,24 @@ export default function ProjectDetailPage() {
       window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, projectId);
     }
     router.push(`/library/?project_id=${encodeURIComponent(projectId)}`);
+  };
+
+  const moveConversation = async (conversation: ImageConversation) => {
+    const targetProjectId = conversationMoveTargets[conversation.id] || projectId;
+    if (!targetProjectId || targetProjectId === projectId) {
+      toast.error("请选择另一个目标项目");
+      return;
+    }
+    setMovingConversationId(conversation.id);
+    try {
+      await moveConversationToProject(conversation.id, targetProjectId);
+      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      toast.success("会话已移动到目标项目");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "移动会话失败");
+    } finally {
+      setMovingConversationId("");
+    }
   };
 
   if (isCheckingAuth || !session || isLoading) {
@@ -268,15 +294,42 @@ export default function ProjectDetailPage() {
             <h2 className="text-lg font-semibold text-slate-950">最近会话</h2>
             <div className="mt-3 space-y-2">
               {conversations.slice(0, 6).map((conversation) => (
-                <button
+                <div
                   key={conversation.id}
-                  type="button"
-                  className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-cyan-200 hover:bg-cyan-50/60"
-                  onClick={openWorkbench}
+                  className="rounded-xl border border-slate-200 bg-white p-3 transition hover:border-cyan-200 hover:bg-cyan-50/60"
                 >
-                  <div className="line-clamp-1 text-sm font-medium text-slate-900">{conversation.title || "未命名会话"}</div>
-                  <div className="mt-1 text-xs text-slate-400">{formatTime(conversation.updatedAt)}</div>
-                </button>
+                  <button type="button" className="w-full text-left" onClick={openWorkbench}>
+                    <div className="line-clamp-1 text-sm font-medium text-slate-900">{conversation.title || "未命名会话"}</div>
+                    <div className="mt-1 text-xs text-slate-400">{formatTime(conversation.updatedAt)}</div>
+                  </button>
+                  <div className="mt-3 flex gap-2">
+                    <select
+                      value={conversationMoveTargets[conversation.id] || projectId}
+                      onChange={(event) =>
+                        setConversationMoveTargets((value) => ({
+                          ...value,
+                          [conversation.id]: event.target.value,
+                        }))
+                      }
+                      className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-cyan-300"
+                    >
+                      {projects.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      variant="outline"
+                      className="h-9 rounded-lg border-slate-200 bg-white px-3 text-xs"
+                      onClick={() => void moveConversation(conversation)}
+                      disabled={movingConversationId === conversation.id}
+                    >
+                      {movingConversationId === conversation.id ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+                      移动
+                    </Button>
+                  </div>
+                </div>
               ))}
               {conversations.length === 0 ? <div className="rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-500">暂无会话</div> : null}
             </div>

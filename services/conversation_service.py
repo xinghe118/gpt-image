@@ -170,5 +170,32 @@ class ConversationService:
                 self._save(next_items)
         return deleted
 
+    def move_conversation(self, identity: dict[str, object], conversation_id: str, project_id: str) -> dict[str, Any] | None:
+        normalized_id = self._clean(conversation_id)
+        if not normalized_id:
+            raise ValueError("conversation id is required")
+        target_project = project_service.ensure_project(identity, project_id)
+        subject_id = self._clean(identity.get("id"))
+        is_admin = identity.get("role") == "admin"
+        now = _now_iso()
+        with self._lock:
+            items = self._load()
+            updated: dict[str, Any] | None = None
+            for item in items:
+                if self._clean(item.get("id")) != normalized_id:
+                    continue
+                if not is_admin and self._clean(item.get("subject_id")) != subject_id:
+                    raise PermissionError("conversation permission denied")
+                item["project_id"] = self._clean(target_project.get("id")) or project_service.DEFAULT_PROJECT_ID
+                item["projectId"] = item["project_id"]
+                item["project_name"] = self._clean(target_project.get("name")) or "默认项目"
+                item["updatedAt"] = now
+                updated = self._public_item(item)
+                break
+            if updated is None:
+                return None
+            self._save(items)
+            return updated
+
 
 conversation_service = ConversationService()

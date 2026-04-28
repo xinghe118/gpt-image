@@ -11,6 +11,7 @@ from services.config import DATA_DIR, config
 from services.image_library_service import image_library_service
 from services.object_storage_service import object_storage_service
 from services.proxy_service import test_proxy
+from services.quota_ledger_service import quota_ledger_service
 from services.storage.json_storage import JSONStorageBackend
 
 
@@ -38,6 +39,11 @@ def create_router(app_version: str) -> APIRouter:
             "role": identity.get("role"),
             "subject_id": identity.get("id"),
             "name": identity.get("name"),
+            "plan": identity.get("plan"),
+            "plan_label": identity.get("plan_label"),
+            "max_images_per_request": identity.get("max_images_per_request"),
+            "allowed_models": identity.get("allowed_models"),
+            "allow_image_edit": identity.get("allow_image_edit"),
             "quota_limit": identity.get("quota_limit"),
             "quota_used": identity.get("quota_used"),
             "quota_remaining": identity.get("quota_remaining"),
@@ -50,6 +56,11 @@ def create_router(app_version: str) -> APIRouter:
             "role": identity.get("role"),
             "subject_id": identity.get("id"),
             "name": identity.get("name"),
+            "plan": identity.get("plan"),
+            "plan_label": identity.get("plan_label"),
+            "max_images_per_request": identity.get("max_images_per_request"),
+            "allowed_models": identity.get("allowed_models"),
+            "allow_image_edit": identity.get("allow_image_edit"),
             "quota_limit": identity.get("quota_limit"),
             "quota_used": identity.get("quota_used"),
             "quota_remaining": identity.get("quota_remaining"),
@@ -163,6 +174,28 @@ def create_router(app_version: str) -> APIRouter:
     async def get_activity_log_summary(authorization: str | None = Header(default=None)):
         require_admin(authorization)
         return {"summary": activity_log_service.summary()}
+
+    @router.get("/api/billing/ledger")
+    async def list_quota_ledger(
+            authorization: str | None = Header(default=None),
+            limit: int = Query(default=100, ge=1, le=500),
+            offset: int = Query(default=0, ge=0),
+            subject_id: str = "",
+            q: str = "",
+    ):
+        identity = require_identity(authorization)
+        return quota_ledger_service.list_entries(
+            identity=identity,
+            limit=limit,
+            offset=offset,
+            subject_id=subject_id,
+            query=q,
+        )
+
+    @router.get("/api/billing/summary")
+    async def get_quota_ledger_summary(authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        return {"summary": quota_ledger_service.summary(identity=identity)}
 
     @router.get("/api/library")
     async def list_library_items(

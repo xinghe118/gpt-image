@@ -660,6 +660,33 @@ export type ActivityLogSummary = {
   latest: ActivityLog[];
 };
 
+export type QuotaLedgerEntry = {
+  id: string;
+  created_at: string;
+  subject_id: string;
+  subject_name: string;
+  role: string;
+  plan: string;
+  plan_label: string;
+  amount: number;
+  status: string;
+  reason: string;
+  event: string;
+  model: string;
+  mode: string;
+  project_id: string;
+  prompt_preview: string;
+};
+
+export type BillingSummary = {
+  total_amount: number;
+  total_entries: number;
+  scope: "all" | "own";
+  by_subject: Array<{ subject_id: string; subject_name: string; amount: number; count: number }>;
+  by_model: Record<string, number>;
+  latest: QuotaLedgerEntry[];
+};
+
 export type PaginatedResponse<T> = {
   items: T[];
   total?: number;
@@ -691,6 +718,21 @@ export async function fetchActivityLogs(params: {
 
 export async function fetchActivityLogSummary() {
   return httpRequest<{ summary: ActivityLogSummary }>("/api/logs/summary");
+}
+
+export async function fetchBillingLedger(params: { limit?: number; offset?: number; subject_id?: string; q?: string } = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") {
+      search.set(key, String(value));
+    }
+  });
+  const query = search.toString();
+  return httpRequest<PaginatedResponse<QuotaLedgerEntry>>(`/api/billing/ledger${query ? `?${query}` : ""}`);
+}
+
+export async function fetchBillingSummary() {
+  return httpRequest<{ summary: BillingSummary }>("/api/billing/summary");
 }
 
 export async function fetchProjects(params: { limit?: number; offset?: number; q?: string } = {}) {

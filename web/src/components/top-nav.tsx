@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { FileText, FolderKanban, Images, ImageIcon, LayoutDashboard, LogOut, Settings, UsersRound } from "lucide-react";
+import { CreditCard, FileText, FolderKanban, Images, ImageIcon, LayoutDashboard, LogOut, Settings, UsersRound } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
 import webConfig from "@/constants/common-env";
@@ -13,6 +13,7 @@ const adminNavItems = [
   { href: "/image", label: "工作台", icon: ImageIcon },
   { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/library", label: "作品库", icon: Images },
+  { href: "/billing", label: "账单", icon: CreditCard },
   { href: "/admin", label: "概览", icon: LayoutDashboard },
   { href: "/admin/logs", label: "日志", icon: FileText },
   { href: "/accounts", label: "账号池", icon: UsersRound },
@@ -23,6 +24,7 @@ const userNavItems = [
   { href: "/image", label: "工作台", icon: ImageIcon },
   { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/library", label: "作品库", icon: Images },
+  { href: "/billing", label: "账单", icon: CreditCard },
 ];
 
 export function TopNav() {

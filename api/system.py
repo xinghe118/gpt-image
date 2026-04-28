@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict
 
 from api.support import require_admin, require_identity
+from services.account_service import account_service
 from services.activity_log_service import activity_log_service
 from services.app_data_store import app_data_store
 from services.config import DATA_DIR, config
@@ -25,6 +28,9 @@ class LibraryMoveProjectRequest(BaseModel):
 
 class ProxyTestRequest(BaseModel):
     url: str = ""
+
+
+STARTED_AT = datetime.now(timezone.utc)
 
 
 def create_router(app_version: str) -> APIRouter:
@@ -82,6 +88,41 @@ def create_router(app_version: str) -> APIRouter:
     @router.get("/version")
     async def get_version():
         return {"version": app_version}
+
+    @router.get("/api/health")
+    async def get_health(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        accounts = account_service.list_accounts()
+        available_accounts = [
+            account for account in accounts
+            if account.get("status") == "正常" and (account.get("imageQuotaUnknown") or int(account.get("quota") or 0) > 0)
+        ]
+        now = datetime.now(timezone.utc)
+        storage = config.get_storage_backend()
+        app_data = app_data_store.health_check()
+        account_storage = storage.health_check()
+        object_storage = object_storage_service.health_check()
+        status = "healthy"
+        if app_data.get("status") == "unhealthy" or account_storage.get("status") == "unhealthy":
+            status = "unhealthy"
+        return {
+            "status": status,
+            "version": app_version,
+            "started_at": STARTED_AT.isoformat(),
+            "uptime_seconds": int((now - STARTED_AT).total_seconds()),
+            "storage_backend": storage.get_backend_info(),
+            "account_storage": account_storage,
+            "app_data": app_data,
+            "object_storage": object_storage,
+            "accounts": {
+                "total": len(accounts),
+                "available": len(available_accounts),
+                "limited": len([item for item in accounts if item.get("status") == "限流"]),
+                "error": len([item for item in accounts if item.get("status") == "异常"]),
+                "disabled": len([item for item in accounts if item.get("status") == "禁用"]),
+            },
+            "concurrency": image_concurrency_service.snapshot(),
+        }
 
     @router.get("/api/settings")
     async def get_settings(authorization: str | None = Header(default=None)):

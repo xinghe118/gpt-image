@@ -8,6 +8,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { ConfigCard } from "./components/config-card";
 import { CPAPoolDialog } from "./components/cpa-pool-dialog";
 import { CPAPoolsCard } from "./components/cpa-pools-card";
+import { HealthCard } from "./components/health-card";
 import { ImportBrowserDialog } from "./components/import-browser-dialog";
 import { SettingsHeader } from "./components/settings-header";
 import { StorageCard } from "./components/storage-card";
@@ -57,6 +58,7 @@ function SettingsPageContent() {
       <section className="page-shell-wide grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="space-y-5">
           <SettingsHeader />
+          <HealthCard />
           <div className="rounded-2xl border border-slate-200 bg-slate-950 p-5 text-white shadow-sm">
             <div className="mb-5 flex items-center justify-between">
               <div>

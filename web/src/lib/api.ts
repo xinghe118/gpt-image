@@ -641,6 +641,34 @@ export async function fetchStorageInfo() {
   return httpRequest<StorageInfo>("/api/storage/info");
 }
 
+export type SystemHealth = {
+  status: string;
+  version: string;
+  started_at: string;
+  uptime_seconds: number;
+  storage_backend: Record<string, unknown>;
+  account_storage: Record<string, unknown>;
+  app_data: Record<string, unknown>;
+  object_storage: Record<string, unknown>;
+  accounts: {
+    total: number;
+    available: number;
+    limited: number;
+    error: number;
+    disabled: number;
+  };
+  concurrency: {
+    limit?: number;
+    running?: number;
+    queued?: number;
+    available?: number;
+  };
+};
+
+export async function fetchSystemHealth() {
+  return httpRequest<SystemHealth>("/api/health");
+}
+
 export async function migrateStorageToDatabase() {
   return httpRequest<{ result: Record<string, unknown> }>("/api/storage/migrate-to-database", {
     method: "POST",

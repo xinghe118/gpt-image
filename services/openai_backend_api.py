@@ -529,10 +529,11 @@ class OpenAIBackendAPI:
         return response
 
     def _parse_image_sse(self, response: requests.Response) -> Dict[str, Any]:
-        """从图片 SSE 里提取 conversation_id、file_ids、sediment_ids。"""
+        """从图片 SSE 里提取 conversation_id、file_ids、sediment_ids 和直接 URL。"""
         conversation_id = ""
         file_ids: list[str] = []
         sediment_ids: list[str] = []
+        direct_urls: list[str] = []
         for raw_line in response.iter_lines():
             if not raw_line:
                 continue
@@ -552,7 +553,20 @@ class OpenAIBackendAPI:
             for sediment_id in re.findall(r"sediment://([A-Za-z0-9_-]+)", payload):
                 if sediment_id not in sediment_ids:
                     sediment_ids.append(sediment_id)
-        return {"conversation_id": conversation_id, "file_ids": file_ids, "sediment_ids": sediment_ids}
+            for direct_url in re.findall(r"https?://[^\s\"'<>]+", payload):
+                direct_url = direct_url.rstrip(").,;]")
+                lowered = direct_url.lower()
+                if (
+                    any(marker in lowered for marker in ("download", "image", "file", "oaiusercontent", "oaidalle", ".png", ".jpg", ".jpeg", ".webp"))
+                    and direct_url not in direct_urls
+                ):
+                    direct_urls.append(direct_url)
+        return {
+            "conversation_id": conversation_id,
+            "file_ids": file_ids,
+            "sediment_ids": sediment_ids,
+            "direct_urls": direct_urls,
+        }
 
     def _get_conversation(self, conversation_id: str) -> Dict[str, Any]:
         """获取完整 conversation 详情。"""
@@ -562,45 +576,101 @@ class OpenAIBackendAPI:
         ensure_ok(response, path)
         return response.json()
 
-    def _extract_image_tool_records(self, data: Dict[str, Any]) -> list[Dict[str, Any]]:
-        """从 conversation 明细里提取图片工具输出记录。"""
-        mapping = data.get("mapping") or {}
-        file_pat = re.compile(r"file-service://([A-Za-z0-9_-]+)")
+    @staticmethod
+    def _append_unique(values: list[str], candidates: list[str]) -> None:
+        for candidate in candidates:
+            if candidate and candidate not in values:
+                values.append(candidate)
+
+    def _extract_image_references(self, value: Any) -> tuple[list[str], list[str], list[str]]:
+        """Recursively extract image file ids, attachment ids and direct URLs from upstream payloads."""
+        file_ids: list[str] = []
+        sediment_ids: list[str] = []
+        direct_urls: list[str] = []
+        file_service_pat = re.compile(r"file-service://([A-Za-z0-9_-]+)")
+        file_pat = re.compile(r"\b(file[-_][A-Za-z0-9_-]+)\b")
         sed_pat = re.compile(r"sediment://([A-Za-z0-9_-]+)")
+        url_pat = re.compile(r"https?://[^\s\"'<>]+")
+
+        def looks_like_image_url(url: str) -> bool:
+            lowered = url.lower()
+            return any(
+                marker in lowered
+                for marker in ("download", "image", "file", "oaiusercontent", "oaidalle", ".png", ".jpg", ".jpeg", ".webp")
+            )
+
+        def collect_from_string(text: str) -> None:
+            self._append_unique(file_ids, file_service_pat.findall(text))
+            self._append_unique(file_ids, [item for item in file_pat.findall(text) if item != "file-service"])
+            self._append_unique(sediment_ids, sed_pat.findall(text))
+            for url in url_pat.findall(text):
+                clean_url = url.rstrip(").,;]")
+                if clean_url and looks_like_image_url(clean_url) and clean_url not in direct_urls:
+                    direct_urls.append(clean_url)
+
+        def walk(item: Any, parent_key: str = "") -> None:
+            if isinstance(item, str):
+                collect_from_string(item)
+                if parent_key in {"download_url", "url", "image_url", "imageUrl"} and item.startswith(("http://", "https://")):
+                    self._append_unique(direct_urls, [item])
+                if parent_key in {"file_id", "fileId", "file", "id"} and re.match(r"^file[-_][A-Za-z0-9_-]+$", item):
+                    self._append_unique(file_ids, [item])
+                if parent_key in {"attachment_id", "attachmentId", "asset_id", "assetId"} and not item.startswith("file"):
+                    self._append_unique(sediment_ids, [item])
+                return
+            if isinstance(item, list):
+                for child in item:
+                    walk(child, parent_key)
+                return
+            if isinstance(item, dict):
+                for key, child in item.items():
+                    walk(child, str(key))
+
+        walk(value)
+        return file_ids, sediment_ids, direct_urls
+
+    def _extract_image_failure_reason(self, data: Dict[str, Any]) -> str:
+        mapping = data.get("mapping") or {}
+        candidates: list[str] = []
+        for node in mapping.values():
+            message = (node or {}).get("message") or {}
+            if not isinstance(message, dict):
+                continue
+            metadata = message.get("metadata") or {}
+            status = str(metadata.get("status") or metadata.get("finish_details") or "").strip()
+            content_text = self._text_from_message(message).strip()
+            if status and status.lower() not in {"finished_successfully", "success", "completed"}:
+                candidates.append(status)
+            if content_text and any(word in content_text.lower() for word in ("can't", "cannot", "unable", "policy", "failed", "error")):
+                candidates.append(content_text[:300])
+        return "; ".join(dict.fromkeys(candidates))[:500]
+
+    def _extract_image_tool_records(self, data: Dict[str, Any]) -> list[Dict[str, Any]]:
+        """从 conversation 明细里提取图片输出记录。兼容工具消息、助手附件和新版字段。"""
+        mapping = data.get("mapping") or {}
         records = []
         for message_id, node in mapping.items():
             message = (node or {}).get("message") or {}
-            author = message.get("author") or {}
-            metadata = message.get("metadata") or {}
-            content = message.get("content") or {}
-            if author.get("role") != "tool":
+            if not isinstance(message, dict):
                 continue
-            if metadata.get("async_task_type") != "image_gen":
+            file_ids, sediment_ids, direct_urls = self._extract_image_references(message)
+            if not file_ids and not sediment_ids and not direct_urls:
                 continue
-            if content.get("content_type") != "multimodal_text":
-                continue
-            file_ids, sediment_ids = [], []
-            for part in content.get("parts") or []:
-                text = (part.get("asset_pointer") or "") if isinstance(part, dict) else (
-                    part if isinstance(part, str) else "")
-                for hit in file_pat.findall(text):
-                    if hit not in file_ids:
-                        file_ids.append(hit)
-                for hit in sed_pat.findall(text):
-                    if hit not in sediment_ids:
-                        sediment_ids.append(hit)
             records.append(
                 {"message_id": message_id, "create_time": message.get("create_time") or 0, "file_ids": file_ids,
-                 "sediment_ids": sediment_ids})
+                 "sediment_ids": sediment_ids, "direct_urls": direct_urls})
         return sorted(records, key=lambda item: item["create_time"])
 
-    def _poll_image_results(self, conversation_id: str, timeout_secs: float = 120.0) -> tuple[list[str], list[str]]:
+    def _poll_image_results(self, conversation_id: str, timeout_secs: float = 120.0) -> tuple[list[str], list[str], list[str], str]:
         """轮询 conversation，直到拿到图片文件 id 或超时。"""
         start = time.time()
+        last_failure_reason = ""
         last_sediment_ids: list[str] = []
+        last_direct_urls: list[str] = []
         while time.time() - start < timeout_secs:
             conversation = self._get_conversation(conversation_id)
             file_ids, sediment_ids = [], []
+            direct_urls: list[str] = []
             for record in self._extract_image_tool_records(conversation):
                 for file_id in record["file_ids"]:
                     if file_id not in file_ids:
@@ -608,12 +678,21 @@ class OpenAIBackendAPI:
                 for sediment_id in record["sediment_ids"]:
                     if sediment_id not in sediment_ids:
                         sediment_ids.append(sediment_id)
+                for direct_url in record.get("direct_urls") or []:
+                    if direct_url not in direct_urls:
+                        direct_urls.append(direct_url)
+            last_failure_reason = self._extract_image_failure_reason(conversation) or last_failure_reason
             if file_ids:
-                return file_ids, sediment_ids
+                return file_ids, sediment_ids, direct_urls, last_failure_reason
+            if direct_urls:
+                return [], sediment_ids, direct_urls, last_failure_reason
             if sediment_ids:
-                return [], sediment_ids
+                last_sediment_ids = sediment_ids
+                return [], sediment_ids, direct_urls, last_failure_reason
+            if direct_urls:
+                last_direct_urls = direct_urls
             time.sleep(4)
-        return [], last_sediment_ids
+        return [], last_sediment_ids, last_direct_urls, last_failure_reason
 
     def _get_file_download_url(self, file_id: str) -> str:
         """获取文件下载地址。"""
@@ -643,9 +722,15 @@ class OpenAIBackendAPI:
         file_path.write_bytes(image_data)
         return f"{config.base_url}/images/{relative_dir.as_posix()}/{file_name}"
 
-    def _resolve_image_urls(self, conversation_id: str, file_ids: list[str], sediment_ids: list[str]) -> list[str]:
+    def _resolve_image_urls(
+        self,
+        conversation_id: str,
+        file_ids: list[str],
+        sediment_ids: list[str],
+        direct_urls: Optional[list[str]] = None,
+    ) -> list[str]:
         """把图片结果 id 解析成可下载 URL。"""
-        urls = []
+        urls = list(dict.fromkeys(direct_urls or []))
         skip_patterns = {"file_upload"}
         for file_id in file_ids:
             if file_id in skip_patterns:
@@ -763,17 +848,22 @@ class OpenAIBackendAPI:
         conversation_id = sse_result["conversation_id"]
         file_ids = list(sse_result["file_ids"])
         sediment_ids = list(sse_result["sediment_ids"])
+        direct_urls = list(sse_result.get("direct_urls") or [])
+        failure_reason = ""
         invalid_file_id_patterns = {"file_upload"}
         file_ids = [fid for fid in file_ids if fid not in invalid_file_id_patterns]
-        if conversation_id and not file_ids and not sediment_ids:
-            polled_file_ids, polled_sediment_ids = self._poll_image_results(conversation_id)
+        if conversation_id and not file_ids and not sediment_ids and not direct_urls:
+            polled_file_ids, polled_sediment_ids, polled_direct_urls, failure_reason = self._poll_image_results(conversation_id)
             file_ids.extend([item for item in polled_file_ids if item not in file_ids])
             sediment_ids.extend([item for item in polled_sediment_ids if item not in sediment_ids])
+            direct_urls.extend([item for item in polled_direct_urls if item not in direct_urls])
             logger.debug({
                 "event": "image_polled_result",
                 "conversation_id": conversation_id,
                 "file_ids": polled_file_ids,
                 "sediment_ids": polled_sediment_ids,
+                "direct_urls": polled_direct_urls,
+                "failure_reason": failure_reason,
             })
             try:
                 conversation = self._get_conversation(conversation_id)
@@ -793,13 +883,15 @@ class OpenAIBackendAPI:
             "conversation_id": conversation_id,
             "file_ids": file_ids,
             "sediment_ids": sediment_ids,
+            "direct_urls": direct_urls,
         })
-        urls = self._resolve_image_urls(conversation_id, file_ids, sediment_ids)
+        urls = self._resolve_image_urls(conversation_id, file_ids, sediment_ids, direct_urls)
         logger.debug({"event": "image_final_urls", "conversation_id": conversation_id, "urls": urls})
         if not urls:
+            reason_suffix = f", upstream_reason={failure_reason}" if failure_reason else ""
             raise RuntimeError(
                 "no downloadable image result found; "
-                f"conversation_id={conversation_id}, file_ids={file_ids}, sediment_ids={sediment_ids}"
+                f"conversation_id={conversation_id}, file_ids={file_ids}, sediment_ids={sediment_ids}{reason_suffix}"
             )
         return self._image_response(urls, response_format)
 
@@ -905,16 +997,20 @@ class OpenAIBackendAPI:
         return ""
 
     @staticmethod
-    def _append_unique(values: list[str], candidates: list[str]) -> None:
-        for candidate in candidates:
-            if candidate and candidate not in values:
-                values.append(candidate)
-
-    @staticmethod
     def _extract_image_stream_ids(payload: str) -> tuple[list[str], list[str]]:
-        file_ids = re.findall(r"(file[-_][A-Za-z0-9]+)", payload)
+        file_ids = [item for item in re.findall(r"\b(file[-_][A-Za-z0-9_-]+)\b", payload) if item != "file-service"]
         sediment_ids = re.findall(r"sediment://([A-Za-z0-9_-]+)", payload)
         return file_ids, sediment_ids
+
+    @staticmethod
+    def _extract_image_stream_urls(payload: str) -> list[str]:
+        urls = []
+        for url in re.findall(r"https?://[^\s\"'<>]+", payload):
+            clean_url = url.rstrip(").,;]")
+            lowered = clean_url.lower()
+            if any(marker in lowered for marker in ("download", "image", "file", "oaiusercontent", "oaidalle", ".png", ".jpg", ".jpeg", ".webp")):
+                urls.append(clean_url)
+        return urls
 
     @staticmethod
     def _extract_image_stream_conversation_id(payload: str) -> str:
@@ -953,6 +1049,8 @@ class OpenAIBackendAPI:
         conversation_id = ""
         file_ids: list[str] = []
         sediment_ids: list[str] = []
+        direct_urls: list[str] = []
+        failure_reason = ""
 
         references = [self._upload_image(image, f"image_{idx}.png") for idx, image in enumerate(images or [], start=1)]
         self._bootstrap()
@@ -978,6 +1076,7 @@ class OpenAIBackendAPI:
                 new_file_ids, new_sediment_ids = self._extract_image_stream_ids(payload)
                 self._append_unique(file_ids, new_file_ids)
                 self._append_unique(sediment_ids, new_sediment_ids)
+                self._append_unique(direct_urls, self._extract_image_stream_urls(payload))
 
                 try:
                     event = json.loads(payload)
@@ -1042,16 +1141,18 @@ class OpenAIBackendAPI:
 
         invalid_file_id_patterns = {"file_upload"}
         file_ids = [fid for fid in file_ids if fid not in invalid_file_id_patterns]
-        if conversation_id and not file_ids and not sediment_ids:
-            polled_file_ids, polled_sediment_ids = self._poll_image_results(conversation_id)
+        if conversation_id and not file_ids and not sediment_ids and not direct_urls:
+            polled_file_ids, polled_sediment_ids, polled_direct_urls, failure_reason = self._poll_image_results(conversation_id)
             self._append_unique(file_ids, polled_file_ids)
             self._append_unique(sediment_ids, polled_sediment_ids)
+            self._append_unique(direct_urls, polled_direct_urls)
 
-        urls = self._resolve_image_urls(conversation_id, file_ids, sediment_ids)
+        urls = self._resolve_image_urls(conversation_id, file_ids, sediment_ids, direct_urls)
         if not urls:
+            reason_suffix = f", upstream_reason={failure_reason}" if failure_reason else ""
             raise RuntimeError(
                 "no downloadable image result found; "
-                f"conversation_id={conversation_id}, file_ids={file_ids}, sediment_ids={sediment_ids}"
+                f"conversation_id={conversation_id}, file_ids={file_ids}, sediment_ids={sediment_ids}{reason_suffix}"
             )
 
         image_content = build_chat_image_markdown_content(self._image_response(urls, "b64_json"))

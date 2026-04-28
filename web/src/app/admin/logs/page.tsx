@@ -60,6 +60,19 @@ function statusCode(item: ActivityLog) {
   return metadataValue(item, "status_code") !== "--" ? metadataValue(item, "status_code") : metadataValue(item, "http_status");
 }
 
+function statusLabel(status: string) {
+  if (status === "ok") {
+    return "成功";
+  }
+  if (status === "accepted") {
+    return "处理中";
+  }
+  if (status === "error") {
+    return "失败";
+  }
+  return status || "--";
+}
+
 function errorCategory(item: ActivityLog) {
   const text = `${item.error || ""} ${item.prompt_preview || ""} ${statusCode(item)}`.toLowerCase();
   if (item.status !== "error" && !item.error) {
@@ -347,7 +360,7 @@ function LogsPageContent() {
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索事件、路由、模型、错误"
+              placeholder="搜索提示词、错误、用户或模型"
               className="h-10 rounded-lg border-slate-200 pl-9"
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -384,141 +397,132 @@ function LogsPageContent() {
           </Button>
         </div>
 
-        {eventOptions.length > 0 ? (
-          <div className="mb-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setEventFilter("");
-                void loadLogs({ silent: true, eventOverride: "" });
-              }}
-              className={cn(
-                "rounded-lg px-3 py-1 text-xs font-medium transition",
-                eventFilter === "" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200",
-              )}
-            >
-              全部事件
-            </button>
-            {eventOptions.map(([event, count]) => (
+        <details className="mb-3 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+          <summary className="cursor-pointer select-none text-sm font-medium text-slate-600">
+            更多筛选
+          </summary>
+          {eventOptions.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
-                key={event}
                 type="button"
                 onClick={() => {
-                  setEventFilter(event);
-                  void loadLogs({ silent: true, eventOverride: event });
+                  setEventFilter("");
+                  void loadLogs({ silent: true, eventOverride: "" });
                 }}
                 className={cn(
                   "rounded-lg px-3 py-1 text-xs font-medium transition",
-                  eventFilter === event ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+                  eventFilter === "" ? "bg-slate-950 text-white" : "bg-white text-slate-600 hover:bg-slate-100",
                 )}
               >
-                {event} · {count}
+                全部事件
               </button>
-            ))}
-          </div>
-        ) : null}
+              {eventOptions.map(([event, count]) => (
+                <button
+                  key={event}
+                  type="button"
+                  onClick={() => {
+                    setEventFilter(event);
+                    void loadLogs({ silent: true, eventOverride: event });
+                  }}
+                  className={cn(
+                    "rounded-lg px-3 py-1 text-xs font-medium transition",
+                    eventFilter === event ? "bg-slate-950 text-white" : "bg-white text-slate-600 hover:bg-slate-100",
+                  )}
+                >
+                  {event} · {count}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
-        <div className="mb-3 grid gap-3 lg:grid-cols-[180px_160px_160px_minmax(180px,1fr)]">
-          <Input
-            value={modelFilter}
-            onChange={(event) => setModelFilter(event.target.value)}
-            placeholder="模型过滤"
-            className="h-10 rounded-lg border-slate-200"
-          />
-          <select
-            value={roleFilter}
-            onChange={(event) => setRoleFilter(event.target.value)}
-            className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-cyan-300"
-          >
-            <option value="">全部角色</option>
-            <option value="admin">管理员</option>
-            <option value="user">普通用户</option>
-          </select>
-          <button
-            type="button"
-            onClick={() => setSlowOnly((value) => !value)}
-            className={cn(
-              "h-10 rounded-lg px-3 text-sm font-medium transition",
-              slowOnly ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200",
-            )}
-          >
-            只看慢请求 &gt; 30s
-          </button>
-          <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" onClick={() => void loadLogs({ silent: true })}>
-            <Filter className="size-4" />
-            应用高级筛选
-          </Button>
-        </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[180px_160px_160px_minmax(180px,1fr)]">
+            <Input
+              value={modelFilter}
+              onChange={(event) => setModelFilter(event.target.value)}
+              placeholder="模型过滤"
+              className="h-10 rounded-lg border-slate-200 bg-white"
+            />
+            <select
+              value={roleFilter}
+              onChange={(event) => setRoleFilter(event.target.value)}
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-cyan-300"
+            >
+              <option value="">全部角色</option>
+              <option value="admin">管理员</option>
+              <option value="user">普通用户</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setSlowOnly((value) => !value)}
+              className={cn(
+                "h-10 rounded-lg px-3 text-sm font-medium transition",
+                slowOnly ? "bg-amber-500 text-white" : "bg-white text-slate-600 hover:bg-slate-100",
+              )}
+            >
+              只看慢请求 &gt; 30s
+            </button>
+            <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" onClick={() => void loadLogs({ silent: true })}>
+              <Filter className="size-4" />
+              应用高级筛选
+            </Button>
+          </div>
+        </details>
 
         <div className="overflow-hidden rounded-xl border border-slate-200">
-          <div className="hidden grid-cols-[140px_140px_76px_96px_120px_120px_76px_minmax(0,1fr)_90px_76px_72px] gap-3 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500 lg:grid">
+          <div className="hidden grid-cols-[132px_118px_150px_120px_64px_minmax(0,1fr)_100px_44px] gap-4 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500 lg:grid">
             <div>时间</div>
-            <div>事件</div>
-            <div>状态</div>
-            <div>原因</div>
-            <div>用户 / 角色</div>
+            <div>结果</div>
+            <div>用户</div>
             <div>模型</div>
-            <div>状态码</div>
             <div>图片</div>
             <div>摘要 / 错误</div>
             <div>耗时</div>
-            <div>详情</div>
+            <div>操作</div>
           </div>
           <div className="divide-y divide-slate-100">
             {items.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-500">暂无日志</div>
             ) : (
-              items.map((item) => (
-                <div key={item.id} className="grid gap-2 px-4 py-4 text-sm lg:grid-cols-[140px_140px_76px_96px_120px_120px_76px_minmax(0,1fr)_90px_76px_72px] lg:items-center lg:gap-3">
-                  <div className="text-slate-500">{formatTime(item.created_at)}</div>
-                  <div className="font-medium text-slate-900">{item.event}</div>
-                  <div>
-                    <Badge variant={item.status === "ok" ? "success" : item.status === "accepted" ? "info" : "danger"}>
-                      {item.status}
-                    </Badge>
-                  </div>
-                  <div>
-                    <Badge variant={errorCategory(item) === "正常" ? "outline" : "warning"}>{errorCategory(item)}</Badge>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate font-medium text-slate-700">{item.subject_id || "--"}</div>
-                    <div className="mt-1 text-xs text-slate-400">{item.role || "unknown"}</div>
-                  </div>
-                  <div className="text-slate-500">{item.model || "--"}</div>
-                  <div className="text-slate-500">{statusCode(item)}</div>
-                  <div className="text-slate-500">{imageCount(item)}</div>
-                  <div className="min-w-0">
-                    <div className="truncate text-slate-700">{item.error || item.prompt_preview || item.route || "--"}</div>
-                    <div className="mt-1 truncate text-xs text-slate-400">
-                      {item.route || "--"} · HTTP {statusCode(item)}
+              items.map((item) => {
+                const category = errorCategory(item);
+                return (
+                  <div key={item.id} className="grid gap-2 px-4 py-3 text-sm lg:grid-cols-[132px_118px_150px_120px_64px_minmax(0,1fr)_100px_44px] lg:items-center lg:gap-4">
+                    <div className="text-slate-500">{formatTime(item.created_at)}</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant={item.status === "ok" ? "success" : item.status === "accepted" ? "info" : "danger"}>
+                        {statusLabel(item.status)}
+                      </Badge>
+                      {category !== "正常" ? <Badge variant="warning">{category}</Badge> : null}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-slate-700">{item.subject_id || "--"}</div>
+                      <div className="mt-1 text-xs text-slate-400">{item.role || "unknown"}</div>
+                    </div>
+                    <div className="truncate text-slate-500">{item.model || "--"}</div>
+                    <div className="text-slate-500">{imageCount(item)}</div>
+                    <div className="min-w-0">
+                      <div className="truncate text-slate-800">{item.error || item.prompt_preview || item.event || "--"}</div>
+                    </div>
+                    <div className={cn("text-slate-500", (item.duration_ms || 0) >= 30000 ? "font-semibold text-amber-600" : "")}>
+                      {item.duration_ms == null ? "--" : `${item.duration_ms}ms`}
+                    </div>
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        className="grid size-8 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-cyan-200 hover:text-cyan-700"
+                        onClick={() => setSelectedLog(item)}
+                        title="查看详情"
+                      >
+                        <Eye className="size-4" />
+                      </button>
                     </div>
                   </div>
-                  <div className={cn("text-slate-500", (item.duration_ms || 0) >= 30000 ? "font-semibold text-amber-600" : "")}>
-                    {item.duration_ms == null ? "--" : `${item.duration_ms}ms`}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="grid size-8 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-cyan-200 hover:text-cyan-700"
-                      onClick={() => setSelectedLog(item)}
-                      title="查看详情"
-                    >
-                      <Eye className="size-4" />
-                    </button>
-                    <button
-                      type="button"
-                      className="grid size-8 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-cyan-200 hover:text-cyan-700"
-                      onClick={() => void copyLogDetail(item)}
-                      title="复制详情"
-                    >
-                      <Copy className="size-4" />
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
+
         {hasMore ? (
           <div className="mt-4 flex justify-center">
             <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" disabled={isLoadingMore} onClick={() => void loadLogs({ append: true, silent: true })}>

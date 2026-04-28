@@ -25,7 +25,6 @@ class ImageConcurrencyService:
         subject_id = str(identity.get("id") or "").strip() or "anonymous"
         return f"{role}:{subject_id}"
 
-    @contextmanager
     def _can_acquire(self, subject_key: str, max_global: int, max_per_subject: int) -> tuple[bool, str]:
         current_subject = self._active_by_subject.get(subject_key, 0)
         if max_global > 0 and self._active_total >= max_global:

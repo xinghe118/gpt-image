@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from api.support import require_identity
@@ -24,9 +24,37 @@ def create_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/projects")
-    async def list_projects(authorization: str | None = Header(default=None)):
+    async def list_projects(
+        authorization: str | None = Header(default=None),
+        q: str = "",
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ):
         identity = require_identity(authorization)
-        return {"items": project_service.list_projects(identity)}
+        items = project_service.list_projects(identity)
+        keyword = q.strip().lower()
+        if keyword:
+            items = [
+                item
+                for item in items
+                if keyword in " ".join(
+                    [
+                        str(item.get("name") or ""),
+                        str(item.get("description") or ""),
+                        str(item.get("subject_name") or ""),
+                        str(item.get("subject_id") or ""),
+                    ]
+                ).lower()
+            ]
+        total = len(items)
+        page_items = items[offset : offset + limit]
+        return {
+            "items": page_items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(page_items) < total,
+        }
 
     @router.get("/api/projects/summary")
     async def project_summary(authorization: str | None = Header(default=None)):

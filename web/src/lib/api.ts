@@ -674,8 +674,15 @@ export async function fetchActivityLogSummary() {
   return httpRequest<{ summary: ActivityLogSummary }>("/api/logs/summary");
 }
 
-export async function fetchProjects() {
-  return httpRequest<{ items: ProjectItem[] }>("/api/projects");
+export async function fetchProjects(params: { limit?: number; offset?: number; q?: string } = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") {
+      search.set(key, String(value));
+    }
+  });
+  const query = search.toString();
+  return httpRequest<PaginatedResponse<ProjectItem>>(`/api/projects${query ? `?${query}` : ""}`);
 }
 
 export async function fetchProjectSummary() {

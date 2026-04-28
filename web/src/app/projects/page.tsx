@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderKanban, ImageIcon, Images, LoaderCircle, Plus, Search, Sparkles, SquareArrowOutUpRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
 const ACTIVE_PROJECT_STORAGE_KEY = "gpt-image:active_project_id";
+const PROJECT_PAGE_SIZE = 48;
 
 function formatTime(value?: string) {
   if (!value) {
@@ -37,27 +38,38 @@ export default function ProjectsPage() {
   const [newName, setNewName] = useState("");
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
-  const loadProjects = async () => {
-    setIsLoading(true);
+  const loadProjects = useCallback(async ({ append = false, offset = 0 }: { append?: boolean; offset?: number } = {}) => {
+    if (append) {
+      setIsLoadingMore(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
-      const [projectData, summaryData] = await Promise.all([fetchProjects(), fetchProjectSummary()]);
-      setProjects(projectData.items);
+      const [projectData, summaryData] = await Promise.all([
+        fetchProjects({ limit: PROJECT_PAGE_SIZE, offset: append ? offset : 0 }),
+        fetchProjectSummary(),
+      ]);
+      setProjects((current) => (append ? [...current, ...projectData.items] : projectData.items));
+      setHasMore(projectData.has_more);
       setSummary(summaryData.summary);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "读取项目失败");
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (isCheckingAuth || !session) {
       return;
     }
     void loadProjects();
-  }, [isCheckingAuth, session]);
+  }, [isCheckingAuth, loadProjects, session]);
 
   const filteredProjects = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -116,6 +128,7 @@ export default function ProjectsPage() {
     try {
       const data = await createProject({ name });
       setProjects(data.items);
+      setHasMore(false);
       void fetchProjectSummary().then((summaryData) => setSummary(summaryData.summary)).catch(() => undefined);
       setNewName("");
       toast.success("项目已创建");
@@ -286,6 +299,20 @@ export default function ProjectsPage() {
           ))}
         </div>
       )}
+
+      {!isLoading && hasMore ? (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            className="rounded-lg border-slate-200 bg-white"
+            onClick={() => void loadProjects({ append: true, offset: projects.length })}
+            disabled={isLoadingMore}
+          >
+            {isLoadingMore ? <LoaderCircle className="size-4 animate-spin" /> : null}
+            加载更多项目
+          </Button>
+        </div>
+      ) : null}
     </section>
   );
 }

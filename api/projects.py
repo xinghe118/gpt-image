@@ -10,12 +10,14 @@ from services.project_service import project_service
 class ProjectCreateRequest(BaseModel):
     name: str = ""
     description: str = ""
+    settings: dict[str, object] | None = None
 
 
 class ProjectUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     archived: bool | None = None
+    settings: dict[str, object] | None = None
 
 
 def create_router() -> APIRouter:
@@ -30,7 +32,7 @@ def create_router() -> APIRouter:
     async def create_project(body: ProjectCreateRequest, authorization: str | None = Header(default=None)):
         identity = require_identity(authorization)
         try:
-            item = project_service.create_project(identity, body.name, body.description)
+            item = project_service.create_project(identity, body.name, body.description, body.settings)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
         return {"item": item, "items": project_service.list_projects(identity)}
@@ -49,6 +51,7 @@ def create_router() -> APIRouter:
                 name=body.name,
                 description=body.description,
                 archived=body.archived,
+                settings=body.settings,
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc

@@ -22,6 +22,49 @@ class ProjectService:
     def _clean(value: object) -> str:
         return str(value or "").strip()
 
+    @staticmethod
+    def default_settings() -> dict[str, object]:
+        return {
+            "default_model": "gpt-image-2",
+            "default_mode": "generate",
+            "default_size": "",
+            "default_count": 1,
+            "default_style_preset_id": "",
+            "default_reference_strength": "medium",
+            "prompt_prefix": "",
+            "prompt_suffix": "",
+        }
+
+    def _normalize_settings(self, value: object) -> dict[str, object]:
+        source = value if isinstance(value, dict) else {}
+        settings = self.default_settings()
+
+        model = self._clean(source.get("default_model"))
+        if model in {"auto", "gpt-image-1", "gpt-image-2", "codex-gpt-image-2"}:
+            settings["default_model"] = model
+
+        mode = self._clean(source.get("default_mode"))
+        if mode in {"generate", "edit"}:
+            settings["default_mode"] = mode
+
+        size = self._clean(source.get("default_size"))
+        if size in {"", "1:1", "16:9", "9:16", "4:3", "3:4"}:
+            settings["default_size"] = size
+
+        try:
+            settings["default_count"] = max(1, min(10, int(source.get("default_count", settings["default_count"]))))
+        except (TypeError, ValueError):
+            settings["default_count"] = 1
+
+        strength = self._clean(source.get("default_reference_strength"))
+        if strength in {"low", "medium", "high"}:
+            settings["default_reference_strength"] = strength
+
+        settings["default_style_preset_id"] = self._clean(source.get("default_style_preset_id"))[:80]
+        settings["prompt_prefix"] = self._clean(source.get("prompt_prefix"))[:500]
+        settings["prompt_suffix"] = self._clean(source.get("prompt_suffix"))[:500]
+        return settings
+
     def _load(self) -> list[dict[str, Any]]:
         return app_data_store.load_projects()
 
@@ -41,6 +84,7 @@ class ProjectService:
             "updated_at": _now_iso(),
             "archived": False,
             "is_default": True,
+            "settings": self.default_settings(),
         }
 
     def _public_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -60,6 +104,7 @@ class ProjectService:
             "conversation_count": int(conversation_count) if isinstance(conversation_count, int) else 0,
             "last_activity_at": self._clean(item.get("last_activity_at")),
             "cover_url": self._clean(item.get("cover_url")),
+            "settings": self._normalize_settings(item.get("settings")),
         }
 
     def ensure_project(self, identity: dict[str, object], project_id: str | None = None) -> dict[str, Any]:
@@ -97,7 +142,13 @@ class ProjectService:
                 unique.append(item)
         return sorted(unique, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
-    def create_project(self, identity: dict[str, object], name: str, description: str = "") -> dict[str, Any]:
+    def create_project(
+        self,
+        identity: dict[str, object],
+        name: str,
+        description: str = "",
+        settings: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
         clean_name = self._clean(name)
         if not clean_name:
             raise ValueError("project name is required")
@@ -112,6 +163,7 @@ class ProjectService:
             "updated_at": now,
             "archived": False,
             "is_default": False,
+            "settings": self._normalize_settings(settings),
         }
         with self._lock:
             items = self._load()
@@ -126,6 +178,7 @@ class ProjectService:
         name: str | None = None,
         description: str | None = None,
         archived: bool | None = None,
+        settings: dict[str, object] | None = None,
     ) -> dict[str, Any] | None:
         normalized_id = self._clean(project_id)
         if not normalized_id or normalized_id == self.DEFAULT_PROJECT_ID:
@@ -150,6 +203,9 @@ class ProjectService:
                     item["description"] = self._clean(description)[:300]
                 if archived is not None:
                     item["archived"] = bool(archived)
+                if settings is not None:
+                    current_settings = self._normalize_settings(item.get("settings"))
+                    item["settings"] = self._normalize_settings({**current_settings, **settings})
                 item["updated_at"] = now
                 updated = self._public_item(item)
                 break

@@ -129,6 +129,17 @@ export type LibraryImageItem = {
   revised_prompt?: string;
 };
 
+export type ProjectSettings = {
+  default_model: ImageModel;
+  default_mode: "generate" | "edit";
+  default_size: string;
+  default_count: number;
+  default_style_preset_id: string;
+  default_reference_strength: "low" | "medium" | "high";
+  prompt_prefix: string;
+  prompt_suffix: string;
+};
+
 export type ProjectItem = {
   id: string;
   subject_id: string;
@@ -143,6 +154,7 @@ export type ProjectItem = {
   conversation_count?: number;
   last_activity_at?: string;
   cover_url?: string;
+  settings?: ProjectSettings;
 };
 
 export async function login(authKey: string) {
@@ -650,7 +662,7 @@ export async function fetchProjects() {
   return httpRequest<{ items: ProjectItem[] }>("/api/projects");
 }
 
-export async function createProject(project: { name: string; description?: string }) {
+export async function createProject(project: { name: string; description?: string; settings?: Partial<ProjectSettings> }) {
   return httpRequest<{ item: ProjectItem; items: ProjectItem[] }>("/api/projects", {
     method: "POST",
     body: project,
@@ -659,7 +671,7 @@ export async function createProject(project: { name: string; description?: strin
 
 export async function updateProject(
   projectId: string,
-  updates: { name?: string; description?: string; archived?: boolean },
+  updates: { name?: string; description?: string; archived?: boolean; settings?: Partial<ProjectSettings> },
 ) {
   return httpRequest<{ item: ProjectItem; items: ProjectItem[] }>(`/api/projects/${projectId}`, {
     method: "POST",

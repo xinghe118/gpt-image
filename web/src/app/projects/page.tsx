@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FolderKanban, ImageIcon, Images, LoaderCircle, Plus, Search, Sparkles } from "lucide-react";
+import { FolderKanban, ImageIcon, Images, LoaderCircle, Plus, Search, Sparkles, SquareArrowOutUpRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -86,6 +86,13 @@ export default function ProjectsPage() {
       window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, project.id);
     }
     router.push(target === "image" ? "/image/" : `/library/?project_id=${encodeURIComponent(project.id)}`);
+  };
+
+  const openProjectDetail = (project: ProjectItem) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, project.id);
+    }
+    router.push(`/projects/detail/?project_id=${encodeURIComponent(project.id)}`);
   };
 
   const handleCreateProject = async () => {
@@ -191,7 +198,7 @@ export default function ProjectsPage() {
                   "grid aspect-[16/9] w-full place-items-center overflow-hidden bg-slate-100",
                   project.cover_url ? "cursor-zoom-in" : "cursor-pointer",
                 )}
-                onClick={() => openProject(project, "library")}
+                onClick={() => openProjectDetail(project)}
               >
                 {project.cover_url ? (
                   <img src={project.cover_url} alt={project.name} className="h-full w-full object-cover transition hover:scale-[1.02]" />
@@ -233,6 +240,10 @@ export default function ProjectsPage() {
                     查看作品
                   </Button>
                 </div>
+                <Button variant="outline" className="h-10 w-full rounded-lg border-slate-200 bg-white" onClick={() => openProjectDetail(project)}>
+                  <SquareArrowOutUpRight className="size-4" />
+                  项目详情
+                </Button>
               </div>
             </article>
           ))}

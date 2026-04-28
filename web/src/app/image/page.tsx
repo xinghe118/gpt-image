@@ -31,6 +31,7 @@ import {
   type GeneratedImageData,
   type ImageModel,
   type ProjectItem,
+  type ProjectSettings,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import {
@@ -84,6 +85,26 @@ const IMAGE_MODELS = [
 
 function isImageModel(value: string): value is ImageModel {
   return IMAGE_MODELS.some((model) => model.value === value);
+}
+
+const IMAGE_SIZES = ["1:1", "16:9", "9:16", "4:3", "3:4", ""] as const;
+
+const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
+  default_model: "gpt-image-2",
+  default_mode: "generate",
+  default_size: "",
+  default_count: 1,
+  default_style_preset_id: "",
+  default_reference_strength: "medium",
+  prompt_prefix: "",
+  prompt_suffix: "",
+};
+
+function getProjectSettings(project?: ProjectItem | null): ProjectSettings {
+  return {
+    ...DEFAULT_PROJECT_SETTINGS,
+    ...(project?.settings || {}),
+  };
 }
 
 type StylePreset = {
@@ -483,6 +504,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [newProjectName, setNewProjectName] = useState("");
   const [projectNameDraft, setProjectNameDraft] = useState("");
   const [projectDescriptionDraft, setProjectDescriptionDraft] = useState("");
+  const [projectSettingsDraft, setProjectSettingsDraft] = useState<ProjectSettings>(DEFAULT_PROJECT_SETTINGS);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isSavingProject, setIsSavingProject] = useState(false);
 
@@ -683,7 +705,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         if (storedSize && typeof window !== "undefined") {
           window.localStorage.setItem(IMAGE_SIZE_STORAGE_KEY, storedSize);
         }
-        if (showImageModelSelector && storedModel && isImageModel(storedModel)) {
+        if (storedModel && isImageModel(storedModel)) {
           setImageModel(storedModel);
         }
         setImageSize(storedSize || "");
@@ -799,7 +821,28 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     setProjectNameDraft(activeProject?.is_default ? "" : activeProject?.name || "");
     setProjectDescriptionDraft(activeProject?.is_default ? "" : activeProject?.description || "");
-  }, [activeProject?.description, activeProject?.id, activeProject?.is_default, activeProject?.name]);
+    setProjectSettingsDraft(getProjectSettings(activeProject));
+  }, [activeProject]);
+
+  useEffect(() => {
+    if (!activeProject) {
+      return;
+    }
+    const settings = getProjectSettings(activeProject);
+    setImageMode(settings.default_mode);
+    setImageCount(String(settings.default_count || 1));
+    setImageSize(settings.default_size || "");
+    setReferenceStrength(settings.default_reference_strength);
+    if (isImageModel(settings.default_model)) {
+      setImageModel(showImageModelSelector ? settings.default_model : "gpt-image-2");
+    }
+    if (settings.default_style_preset_id) {
+      const preset = stylePresets.find((item) => item.id === settings.default_style_preset_id);
+      if (preset) {
+        setImagePrompt((value) => (value.trim() ? value : preset.prompt));
+      }
+    }
+  }, [activeProject, showImageModelSelector, stylePresets]);
 
   useEffect(() => {
     if (!selectedConversation) {
@@ -891,6 +934,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       const data = await updateProject(activeProject.id, {
         name,
         description: projectDescriptionDraft.trim(),
+        settings: projectSettingsDraft,
       });
       setProjects(data.items);
       toast.success("项目已保存");
@@ -1440,12 +1484,17 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const targetConversation = selectedConversationId
       ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
       : null;
+    const activeSettings = getProjectSettings(activeProject);
+    const finalPrompt = [activeSettings.prompt_prefix, prompt, activeSettings.prompt_suffix]
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join("\n\n");
     const now = new Date().toISOString();
     const conversationId = targetConversation?.id ?? createId();
     const turnId = createId();
     const draftTurn: ImageTurn = {
       id: turnId,
-      prompt,
+      prompt: finalPrompt,
       model: showImageModelSelector ? imageModel : "gpt-image-2",
       mode: imageMode,
       referenceImages: imageMode === "edit" ? referenceImages : [],
@@ -1557,6 +1606,130 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                     placeholder="项目说明，例如客户、用途、版本目标"
                     rows={2}
                     className="min-h-[64px] resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-cyan-300"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-xs font-medium text-slate-500">
+                      默认模式
+                      <select
+                        value={projectSettingsDraft.default_mode}
+                        onChange={(event) =>
+                          setProjectSettingsDraft((value) => ({
+                            ...value,
+                            default_mode: event.target.value === "edit" ? "edit" : "generate",
+                          }))
+                        }
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-800 outline-none focus:border-cyan-300"
+                      >
+                        <option value="generate">文生图</option>
+                        <option value="edit">图生图</option>
+                      </select>
+                    </label>
+                    <label className="text-xs font-medium text-slate-500">
+                      默认模型
+                      <select
+                        value={projectSettingsDraft.default_model}
+                        onChange={(event) => {
+                          const nextModel = event.target.value;
+                          if (isImageModel(nextModel)) {
+                            setProjectSettingsDraft((value) => ({ ...value, default_model: nextModel }));
+                          }
+                        }}
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-800 outline-none focus:border-cyan-300"
+                      >
+                        {IMAGE_MODELS.map((model) => (
+                          <option key={model.value} value={model.value}>
+                            {model.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-medium text-slate-500">
+                      默认比例
+                      <select
+                        value={projectSettingsDraft.default_size}
+                        onChange={(event) =>
+                          setProjectSettingsDraft((value) => ({ ...value, default_size: event.target.value }))
+                        }
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-800 outline-none focus:border-cyan-300"
+                      >
+                        {IMAGE_SIZES.map((size) => (
+                          <option key={size || "auto"} value={size}>
+                            {size || "自动"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-medium text-slate-500">
+                      默认张数
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={projectSettingsDraft.default_count}
+                        onChange={(event) =>
+                          setProjectSettingsDraft((value) => ({
+                            ...value,
+                            default_count: Math.max(1, Math.min(10, Number(event.target.value) || 1)),
+                          }))
+                        }
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-800 outline-none focus:border-cyan-300"
+                      />
+                    </label>
+                    <label className="text-xs font-medium text-slate-500">
+                      默认参考强度
+                      <select
+                        value={projectSettingsDraft.default_reference_strength}
+                        onChange={(event) => {
+                          const nextStrength = event.target.value as ImageReferenceStrength;
+                          setProjectSettingsDraft((value) => ({ ...value, default_reference_strength: nextStrength }));
+                        }}
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-800 outline-none focus:border-cyan-300"
+                      >
+                        {REFERENCE_STRENGTH_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-medium text-slate-500">
+                      默认风格
+                      <select
+                        value={projectSettingsDraft.default_style_preset_id}
+                        onChange={(event) =>
+                          setProjectSettingsDraft((value) => ({
+                            ...value,
+                            default_style_preset_id: event.target.value,
+                          }))
+                        }
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-800 outline-none focus:border-cyan-300"
+                      >
+                        <option value="">不指定</option>
+                        {stylePresets.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <textarea
+                    value={projectSettingsDraft.prompt_prefix}
+                    onChange={(event) =>
+                      setProjectSettingsDraft((value) => ({ ...value, prompt_prefix: event.target.value }))
+                    }
+                    placeholder="项目提示词前缀，例如品牌规范、固定角色或画面约束"
+                    rows={2}
+                    className="min-h-[58px] resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-cyan-300"
+                  />
+                  <textarea
+                    value={projectSettingsDraft.prompt_suffix}
+                    onChange={(event) =>
+                      setProjectSettingsDraft((value) => ({ ...value, prompt_suffix: event.target.value }))
+                    }
+                    placeholder="项目提示词后缀，例如统一风格、禁用元素或交付要求"
+                    rows={2}
+                    className="min-h-[58px] resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-cyan-300"
                   />
                 </div>
                 <div className="flex gap-2">

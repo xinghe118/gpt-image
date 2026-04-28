@@ -61,6 +61,9 @@ class ActivityLogService:
         level: str = "",
         status: str = "",
         event: str = "",
+        model: str = "",
+        role: str = "",
+        min_duration_ms: int | None = None,
         query: str = "",
     ) -> dict[str, Any]:
         limit = max(1, min(int(limit or 100), 500))
@@ -68,6 +71,8 @@ class ActivityLogService:
         level = level.strip().lower()
         status = status.strip().lower()
         event = event.strip().lower()
+        model = model.strip().lower()
+        role = role.strip().lower()
         query = query.strip().lower()
         items: list[dict[str, Any]] = []
         with self._lock:
@@ -80,6 +85,14 @@ class ActivityLogService:
                 continue
             if event and event not in str(item.get("event") or "").lower():
                 continue
+            if model and model not in str(item.get("model") or "").lower():
+                continue
+            if role and str(item.get("role") or "").lower() != role:
+                continue
+            if min_duration_ms is not None:
+                duration = item.get("duration_ms")
+                if not isinstance(duration, int) or duration < min_duration_ms:
+                    continue
             if query:
                 haystack = str(item).lower()
                 if query not in haystack:

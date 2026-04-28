@@ -141,6 +141,9 @@ def create_router(app_version: str) -> APIRouter:
             level: str = "",
             status: str = "",
             event: str = "",
+            model: str = "",
+            role: str = "",
+            min_duration_ms: int | None = Query(default=None, ge=0),
             q: str = "",
     ):
         require_admin(authorization)
@@ -150,6 +153,9 @@ def create_router(app_version: str) -> APIRouter:
             level=level,
             status=status,
             event=event,
+            model=model,
+            role=role,
+            min_duration_ms=min_duration_ms,
             query=q,
         )
 

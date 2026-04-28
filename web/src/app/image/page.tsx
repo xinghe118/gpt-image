@@ -466,6 +466,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
   const [conversations, setConversations] = useState<ImageConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [isNewConversationDraft, setIsNewConversationDraft] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [availableQuota, setAvailableQuota] = useState("加载中...");
   const [currentIdentity, setCurrentIdentity] = useState<CurrentIdentity | null>(null);
@@ -842,18 +843,25 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   useEffect(() => {
     if (selectedConversationId && !conversations.some((conversation) => conversation.id === selectedConversationId)) {
+      setIsNewConversationDraft(false);
       setSelectedConversationId(pickFallbackConversationId(conversations));
     }
   }, [conversations, selectedConversationId]);
 
   useEffect(() => {
     if (selectedConversationId && !projectConversations.some((conversation) => conversation.id === selectedConversationId)) {
+      setIsNewConversationDraft(false);
       setSelectedConversationId(pickFallbackConversationId(projectConversations));
     }
-    if (!selectedConversationId && projectConversations.length > 0) {
+    if (!selectedConversationId && !isNewConversationDraft && projectConversations.length > 0) {
       setSelectedConversationId(pickFallbackConversationId(projectConversations));
     }
-  }, [activeProjectId, projectConversations, selectedConversationId]);
+  }, [activeProjectId, isNewConversationDraft, projectConversations, selectedConversationId]);
+
+  const selectConversation = useCallback((id: string | null) => {
+    setIsNewConversationDraft(false);
+    setSelectedConversationId(id);
+  }, []);
 
   const handleCreateProject = async () => {
     const name = newProjectName.trim();
@@ -866,6 +874,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       const data = await createProject({ name });
       setProjects(data.items);
       setActiveProjectId(data.item.id);
+      setIsNewConversationDraft(true);
       setSelectedConversationId(null);
       setNewProjectName("");
       resetComposer();
@@ -911,6 +920,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       setProjects(data.items);
       const nextProjectId = data.items[0]?.id || "default";
       setActiveProjectId(nextProjectId);
+      setIsNewConversationDraft(true);
       setSelectedConversationId(null);
       toast.success("项目已归档");
     } catch (error) {
@@ -967,9 +977,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   }, [clearComposerInputs]);
 
   const handleCreateDraft = () => {
+    setIsNewConversationDraft(true);
     setSelectedConversationId(null);
     resetComposer();
-    textareaRef.current?.focus();
+    requestAnimationFrame(() => textareaRef.current?.focus());
+    toast.success("已进入新对话");
   };
 
   const handleDeleteConversation = async (id: string) => {
@@ -977,7 +989,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
     if (selectedConversationId === id) {
-      setSelectedConversationId(pickFallbackConversationId(nextConversations));
+      selectConversation(pickFallbackConversationId(nextConversations));
       resetComposer();
     }
 
@@ -1003,6 +1015,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       await deleteImageConversations(deletingIds);
       conversationsRef.current = nextConversations;
       setConversations(nextConversations);
+      setIsNewConversationDraft(true);
       setSelectedConversationId(null);
       resetComposer();
       toast.success("已清空当前项目的历史记录");
@@ -1074,7 +1087,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         return;
       }
 
-      setSelectedConversationId(conversationId);
+      selectConversation(conversationId);
       setImageMode("edit");
       setReferenceImages((prev) => [...prev, nextReferenceImage]);
       setReferenceImageFiles((prev) => [
@@ -1085,7 +1098,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       textareaRef.current?.focus();
       toast.success("已加入当前参考图，继续输入描述即可编辑");
     },
-    [],
+    [selectConversation],
   );
 
   useEffect(() => {
@@ -1392,11 +1405,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           ),
         };
       });
-      setSelectedConversationId(conversationId);
+      selectConversation(conversationId);
       toast.success("已重新加入生成队列");
       void runConversationQueue(conversationId);
     },
-    [runConversationQueue, updateConversation],
+    [runConversationQueue, selectConversation, updateConversation],
   );
 
   const handleEnhancePrompt = useCallback(() => {
@@ -1476,7 +1489,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           turns: [draftTurn],
         };
 
-    setSelectedConversationId(conversationId);
+    selectConversation(conversationId);
     clearComposerInputs();
 
     await persistConversation(baseConversation);
@@ -1510,6 +1523,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               value={activeProjectId}
               onChange={(event) => {
                 setActiveProjectId(event.target.value);
+                setIsNewConversationDraft(true);
                 setSelectedConversationId(null);
                 resetComposer();
               }}
@@ -1589,7 +1603,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             selectedConversationId={selectedConversationId}
             onCreateDraft={handleCreateDraft}
             onClearHistory={handleClearHistory}
-            onSelectConversation={setSelectedConversationId}
+            onSelectConversation={selectConversation}
             onDeleteConversation={handleDeleteConversation}
             formatConversationTime={formatConversationTime}
           />
@@ -1614,7 +1628,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                 }}
                 onClearHistory={handleClearHistory}
                 onSelectConversation={(id) => {
-                  setSelectedConversationId(id);
+                  selectConversation(id);
                   setIsHistoryOpen(false);
                 }}
                 onDeleteConversation={handleDeleteConversation}
@@ -1753,7 +1767,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                 </div>
                 <div className="min-w-0">
                   <h1 className="truncate text-base font-semibold text-slate-950 sm:text-lg">
-                    {selectedConversation?.title || "图片工作台"}
+                    {isNewConversationDraft ? "新对话" : selectedConversation?.title || "图片工作台"}
                   </h1>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span className="inline-flex items-center gap-1">
@@ -1818,6 +1832,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                 value={activeProjectId}
                 onChange={(event) => {
                   setActiveProjectId(event.target.value);
+                  setIsNewConversationDraft(true);
                   setSelectedConversationId(null);
                   resetComposer();
                 }}

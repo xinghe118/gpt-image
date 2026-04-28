@@ -658,6 +658,9 @@ export async function fetchActivityLogs(params: {
   level?: string;
   status?: string;
   event?: string;
+  model?: string;
+  role?: string;
+  min_duration_ms?: number;
   q?: string;
 } = {}) {
   const search = new URLSearchParams();

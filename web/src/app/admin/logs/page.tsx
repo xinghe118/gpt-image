@@ -230,16 +230,18 @@ function LogsPageContent() {
   }
 
   return (
-    <section className="page-shell-wide space-y-5">
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <section className="page-shell-wide space-y-4">
+      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-lg bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
               <FileText className="size-4" />
               活动日志
             </div>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">日志中心</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-500">查看 API 调用、失败原因、耗时和用户访问痕迹，敏感内容已摘要化。</p>
+            <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-950">日志中心</h1>
+              <p className="text-sm leading-6 text-slate-500">查看 API 调用、失败原因、耗时和用户访问痕迹。</p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -262,30 +264,30 @@ function LogsPageContent() {
             </Button>
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
           <ShieldCheck className="size-4 text-emerald-500" />
           日志详情已默认摘要化，密钥、token 和敏感参数不在列表中展示。
           {lastRefreshAt ? <span>最后刷新：{formatTime(lastRefreshAt)}</span> : null}
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-4">
         <Metric label="最近日志" value={summary?.total ?? 0} icon={FileText} tone="slate" />
         <Metric label="失败数" value={summary?.failures ?? 0} icon={AlertTriangle} tone="rose" />
         <Metric label="成功率" value={summary?.success_rate == null ? "--" : `${summary.success_rate}%`} icon={CheckCircle2} tone="emerald" />
         <Metric label="平均耗时" value={summary?.avg_duration_ms == null ? "--" : `${summary.avg_duration_ms}ms`} icon={Clock3} tone="cyan" />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-slate-950">失败原因归类</h2>
-              <p className="mt-1 text-sm text-slate-500">按当前列表自动识别常见故障类型。</p>
+              <h2 className="text-base font-semibold text-slate-950">失败原因归类</h2>
+              <p className="mt-1 text-xs text-slate-500">按当前列表自动识别常见故障类型。</p>
             </div>
             <AlertTriangle className="size-5 text-rose-500" />
           </div>
-          <div className="mt-4 space-y-3">
+          <div className="mt-3 grid max-h-44 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-1">
             {failureCategories.length ? (
               failureCategories.map(([category, count]) => (
                 <button
@@ -297,25 +299,25 @@ function LogsPageContent() {
                     void loadLogs({ silent: true, statusOverride: "error" });
                   }}
                 >
-                  <span className="font-medium text-slate-800">{category}</span>
+                  <span className="text-sm font-medium text-slate-800">{category}</span>
                   <Badge variant="danger">{count}</Badge>
                 </button>
               ))
             ) : (
-              <div className="rounded-xl bg-slate-50 px-3 py-4 text-sm text-slate-500">当前列表暂无失败日志。</div>
+              <div className="rounded-xl bg-slate-50 px-3 py-3 text-sm text-slate-500">当前列表暂无失败日志。</div>
             )}
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-slate-950">慢请求 Top</h2>
-              <p className="mt-1 text-sm text-slate-500">展示当前列表中超过 30 秒的请求。</p>
+              <h2 className="text-base font-semibold text-slate-950">慢请求 Top</h2>
+              <p className="mt-1 text-xs text-slate-500">展示当前列表中超过 30 秒的请求。</p>
             </div>
             <TimerReset className="size-5 text-amber-500" />
           </div>
-          <div className="mt-4 space-y-2">
+          <div className="mt-3 grid max-h-44 gap-2 overflow-y-auto pr-1 lg:grid-cols-2">
             {slowRequests.length ? (
               slowRequests.map((item) => (
                 <button
@@ -332,14 +334,14 @@ function LogsPageContent() {
                 </button>
               ))
             ) : (
-              <div className="rounded-xl bg-slate-50 px-3 py-4 text-sm text-slate-500">当前列表没有超过 30 秒的请求。</div>
+              <div className="rounded-xl bg-slate-50 px-3 py-3 text-sm text-slate-500">当前列表没有超过 30 秒的请求。</div>
             )}
           </div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <Input
@@ -383,7 +385,7 @@ function LogsPageContent() {
         </div>
 
         {eventOptions.length > 0 ? (
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-3 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => {
@@ -416,7 +418,7 @@ function LogsPageContent() {
           </div>
         ) : null}
 
-        <div className="mb-4 grid gap-3 lg:grid-cols-[180px_160px_160px_auto]">
+        <div className="mb-3 grid gap-3 lg:grid-cols-[180px_160px_160px_minmax(180px,1fr)]">
           <Input
             value={modelFilter}
             onChange={(event) => setModelFilter(event.target.value)}
@@ -622,12 +624,14 @@ function Metric({ label, value, icon: Icon, tone }: { label: string; value: numb
     cyan: "bg-cyan-50 text-cyan-700",
   };
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className={cn("mb-4 inline-flex size-10 items-center justify-center rounded-lg", tones[tone])}>
-        <Icon className="size-5" />
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className={cn("inline-flex size-10 shrink-0 items-center justify-center rounded-xl", tones[tone])}>
+        <Icon className="size-4" />
       </div>
-      <div className="text-2xl font-semibold text-slate-950">{value}</div>
-      <div className="mt-1 text-sm text-slate-500">{label}</div>
+      <div className="min-w-0">
+        <div className="text-2xl font-semibold leading-none text-slate-950">{value}</div>
+        <div className="mt-1 text-sm text-slate-500">{label}</div>
+      </div>
     </div>
   );
 }

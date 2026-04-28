@@ -46,18 +46,9 @@ class ConversationService:
         conversation_id = self._clean(item.get("id"))
         if not conversation_id:
             return None
-        is_admin = identity.get("role") == "admin"
-        subject_id = (
-            self._clean(item.get("subject_id"))
-            if is_admin and self._clean(item.get("subject_id"))
-            else self._clean(identity.get("id")) or "anonymous"
-        )
-        subject_name = (
-            self._clean(item.get("subject_name"))
-            if is_admin and self._clean(item.get("subject_name"))
-            else self._clean(identity.get("name")) or subject_id
-        )
-        role = self._clean(item.get("role")) if is_admin and self._clean(item.get("role")) else self._clean(identity.get("role")) or "user"
+        subject_id = self._clean(identity.get("id")) or "anonymous"
+        subject_name = self._clean(identity.get("name")) or subject_id
+        role = self._clean(identity.get("role")) or "user"
         project = project_service.ensure_project(identity, self._clean(item.get("projectId") or item.get("project_id")))
         now = _now_iso()
         created_at = self._clean(item.get("createdAt") or item.get("created_at")) or now
@@ -83,12 +74,11 @@ class ConversationService:
         limit: int = 500,
     ) -> list[dict[str, Any]]:
         subject_id = self._clean(identity.get("id"))
-        is_admin = identity.get("role") == "admin"
         normalized_project_id = self._clean(project_id)
         limit = max(1, min(1000, int(limit or 500)))
         with self._lock:
             items = self._load()
-        visible = items if is_admin else [item for item in items if self._clean(item.get("subject_id")) == subject_id]
+        visible = [item for item in items if self._clean(item.get("subject_id")) == subject_id]
         if normalized_project_id:
             visible = [
                 item
@@ -104,7 +94,6 @@ class ConversationService:
 
     def save_conversations(self, identity: dict[str, object], conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         subject_id = self._clean(identity.get("id"))
-        is_admin = identity.get("role") == "admin"
         normalized_items = [
             item
             for source in conversations
@@ -119,7 +108,6 @@ class ConversationService:
                 self._clean(item.get("id"))
                 for item in existing
                 if self._clean(item.get("id")) in incoming_ids
-                and not is_admin
                 and self._clean(item.get("subject_id")) != subject_id
             }
             allowed_items = [item for item in normalized_items if self._clean(item.get("id")) not in protected_ids]
@@ -133,7 +121,6 @@ class ConversationService:
         if item is None:
             raise ValueError("conversation id is required")
         subject_id = self._clean(identity.get("id"))
-        is_admin = identity.get("role") == "admin"
         with self._lock:
             items = self._load()
             next_items: list[dict[str, Any]] = []
@@ -142,7 +129,7 @@ class ConversationService:
                 if self._clean(existing.get("id")) != self._clean(item.get("id")):
                     next_items.append(existing)
                     continue
-                if not is_admin and self._clean(existing.get("subject_id")) != subject_id:
+                if self._clean(existing.get("subject_id")) != subject_id:
                     raise PermissionError("conversation permission denied")
                 next_items.append(item)
                 replaced = True
@@ -154,7 +141,6 @@ class ConversationService:
     def delete_conversation(self, identity: dict[str, object], conversation_id: str) -> bool:
         normalized_id = self._clean(conversation_id)
         subject_id = self._clean(identity.get("id"))
-        is_admin = identity.get("role") == "admin"
         deleted = False
         with self._lock:
             items = self._load()
@@ -163,7 +149,7 @@ class ConversationService:
                 if self._clean(item.get("id")) != normalized_id:
                     next_items.append(item)
                     continue
-                if not is_admin and self._clean(item.get("subject_id")) != subject_id:
+                if self._clean(item.get("subject_id")) != subject_id:
                     raise PermissionError("conversation permission denied")
                 deleted = True
             if deleted:
@@ -176,7 +162,6 @@ class ConversationService:
             raise ValueError("conversation id is required")
         target_project = project_service.ensure_project(identity, project_id)
         subject_id = self._clean(identity.get("id"))
-        is_admin = identity.get("role") == "admin"
         now = _now_iso()
         with self._lock:
             items = self._load()
@@ -184,7 +169,7 @@ class ConversationService:
             for item in items:
                 if self._clean(item.get("id")) != normalized_id:
                     continue
-                if not is_admin and self._clean(item.get("subject_id")) != subject_id:
+                if self._clean(item.get("subject_id")) != subject_id:
                     raise PermissionError("conversation permission denied")
                 item["project_id"] = self._clean(target_project.get("id")) or project_service.DEFAULT_PROJECT_ID
                 item["projectId"] = item["project_id"]

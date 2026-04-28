@@ -7,7 +7,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { createProject, fetchProjects, type ProjectItem } from "@/lib/api";
+import { createProject, fetchProjectSummary, fetchProjects, type ProjectItem, type ProjectSummary } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
@@ -35,14 +35,16 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [query, setQuery] = useState("");
   const [newName, setNewName] = useState("");
+  const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
 
   const loadProjects = async () => {
     setIsLoading(true);
     try {
-      const data = await fetchProjects();
-      setProjects(data.items);
+      const [projectData, summaryData] = await Promise.all([fetchProjects(), fetchProjectSummary()]);
+      setProjects(projectData.items);
+      setSummary(summaryData.summary);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "读取项目失败");
     } finally {
@@ -68,17 +70,26 @@ export default function ProjectsPage() {
   }, [projects, query]);
 
   const totals = useMemo(
-    () =>
-      projects.reduce(
+    () => {
+      if (summary) {
+        return {
+          projects: summary.total_projects,
+          images: summary.total_images,
+          conversations: summary.total_conversations,
+          archived: summary.archived_projects,
+        };
+      }
+      return projects.reduce(
         (acc, project) => {
           acc.projects += 1;
           acc.images += project.image_count || 0;
           acc.conversations += project.conversation_count || 0;
           return acc;
         },
-        { projects: 0, images: 0, conversations: 0 },
-      ),
-    [projects],
+        { projects: 0, images: 0, conversations: 0, archived: 0 },
+      );
+    },
+    [projects, summary],
   );
 
   const openProject = (project: ProjectItem, target: "image" | "library") => {
@@ -105,6 +116,7 @@ export default function ProjectsPage() {
     try {
       const data = await createProject({ name });
       setProjects(data.items);
+      void fetchProjectSummary().then((summaryData) => setSummary(summaryData.summary)).catch(() => undefined);
       setNewName("");
       toast.success("项目已创建");
       openProject(data.item, "image");
@@ -137,13 +149,38 @@ export default function ProjectsPage() {
               {session.role === "admin" ? "管理员可查看所有用户的项目、会话和作品统计。" : "按项目整理你的会话、作品和创作上下文。"}
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-4 gap-2 text-center">
             <Stat label="项目" value={totals.projects} />
             <Stat label="会话" value={totals.conversations} />
             <Stat label="作品" value={totals.images} />
+            <Stat label="归档" value={totals.archived} />
           </div>
         </div>
       </div>
+
+      {session.role === "admin" && summary?.owners?.length ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">用户项目分布</h2>
+              <p className="text-sm text-slate-500">用于商用运营时快速看每个用户的项目、作品和会话占比。</p>
+            </div>
+            <div className="text-xs text-slate-400">最近活动：{formatTime(summary.latest_activity_at)}</div>
+          </div>
+          <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {summary.owners.slice(0, 8).map((owner) => (
+              <div key={owner.subject_id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <div className="truncate text-sm font-semibold text-slate-900">{owner.subject_name || owner.subject_id}</div>
+                <div className="mt-2 grid grid-cols-3 gap-2 text-center text-xs">
+                  <Stat label="项目" value={owner.project_count} compact />
+                  <Stat label="作品" value={owner.image_count} compact />
+                  <Stat label="会话" value={owner.conversation_count} compact />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">

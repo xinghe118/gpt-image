@@ -157,6 +157,22 @@ export type ProjectItem = {
   settings?: ProjectSettings;
 };
 
+export type ProjectSummary = {
+  total_projects: number;
+  archived_projects: number;
+  total_images: number;
+  total_conversations: number;
+  latest_activity_at: string;
+  scope: "all" | "own";
+  owners: Array<{
+    subject_id: string;
+    subject_name: string;
+    project_count: number;
+    image_count: number;
+    conversation_count: number;
+  }>;
+};
+
 export async function login(authKey: string) {
   const normalizedAuthKey = String(authKey || "").trim();
   return httpRequest<LoginResponse>("/auth/login", {
@@ -660,6 +676,10 @@ export async function fetchActivityLogSummary() {
 
 export async function fetchProjects() {
   return httpRequest<{ items: ProjectItem[] }>("/api/projects");
+}
+
+export async function fetchProjectSummary() {
+  return httpRequest<{ summary: ProjectSummary }>("/api/projects/summary");
 }
 
 export async function createProject(project: { name: string; description?: string; settings?: Partial<ProjectSettings> }) {

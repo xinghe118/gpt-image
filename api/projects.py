@@ -28,6 +28,11 @@ def create_router() -> APIRouter:
         identity = require_identity(authorization)
         return {"items": project_service.list_projects(identity)}
 
+    @router.get("/api/projects/summary")
+    async def project_summary(authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        return {"summary": project_service.summary(identity)}
+
     @router.post("/api/projects")
     async def create_project(body: ProjectCreateRequest, authorization: str | None = Header(default=None)):
         identity = require_identity(authorization)

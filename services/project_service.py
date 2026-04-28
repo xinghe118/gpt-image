@@ -142,6 +142,65 @@ class ProjectService:
                 unique.append(item)
         return sorted(unique, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
+    def summary(self, identity: dict[str, object]) -> dict[str, Any]:
+        subject_id = self._clean(identity.get("id"))
+        is_admin = identity.get("role") == "admin"
+        with self._lock:
+            items = self._load()
+        visible = items if is_admin else [item for item in items if self._clean(item.get("subject_id")) == subject_id]
+        default = self.default_project(identity)
+        projects = [default, *[self._public_item(item) for item in visible]]
+        stats = app_data_store.project_stats(subject_id=subject_id, include_all=is_admin)
+
+        total_images = 0
+        total_conversations = 0
+        active_projects = 0
+        archived_projects = 0
+        owner_buckets: dict[str, dict[str, Any]] = {}
+        latest_activity = ""
+
+        for item in projects:
+            project_id = self._clean(item.get("id"))
+            project_stats = stats.get(project_id, {})
+            image_count = int(project_stats.get("image_count") or item.get("image_count") or 0)
+            conversation_count = int(project_stats.get("conversation_count") or item.get("conversation_count") or 0)
+            last_activity_at = self._clean(project_stats.get("last_activity_at") or item.get("last_activity_at") or item.get("updated_at"))
+            total_images += image_count
+            total_conversations += conversation_count
+            if item.get("archived"):
+                archived_projects += 1
+            else:
+                active_projects += 1
+            if last_activity_at > latest_activity:
+                latest_activity = last_activity_at
+
+            owner_id = self._clean(item.get("subject_id")) or "anonymous"
+            owner = owner_buckets.setdefault(
+                owner_id,
+                {
+                    "subject_id": owner_id,
+                    "subject_name": self._clean(item.get("subject_name")) or owner_id,
+                    "project_count": 0,
+                    "image_count": 0,
+                    "conversation_count": 0,
+                },
+            )
+            if not item.get("archived"):
+                owner["project_count"] += 1
+            owner["image_count"] += image_count
+            owner["conversation_count"] += conversation_count
+
+        owners = sorted(owner_buckets.values(), key=lambda item: int(item.get("image_count") or 0), reverse=True)
+        return {
+            "total_projects": active_projects,
+            "archived_projects": archived_projects,
+            "total_images": total_images,
+            "total_conversations": total_conversations,
+            "latest_activity_at": latest_activity,
+            "scope": "all" if is_admin else "own",
+            "owners": owners if is_admin else [],
+        }
+
     def create_project(
         self,
         identity: dict[str, object],

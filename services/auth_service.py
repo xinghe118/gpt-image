@@ -13,6 +13,33 @@ from services.storage.base import StorageBackend
 
 AuthRole = Literal["admin", "user"]
 
+USER_PLANS: dict[str, dict[str, object]] = {
+    "trial": {
+        "label": "免费体验",
+        "max_images_per_request": 1,
+        "allowed_models": ["gpt-image-2"],
+        "allow_image_edit": False,
+    },
+    "standard": {
+        "label": "标准版",
+        "max_images_per_request": 2,
+        "allowed_models": ["auto", "gpt-image-1", "gpt-image-2"],
+        "allow_image_edit": True,
+    },
+    "pro": {
+        "label": "高级版",
+        "max_images_per_request": 4,
+        "allowed_models": [],
+        "allow_image_edit": True,
+    },
+    "internal": {
+        "label": "内部账号",
+        "max_images_per_request": 4,
+        "allowed_models": [],
+        "allow_image_edit": True,
+    },
+}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -51,6 +78,25 @@ class AuthService:
             return 0
         return max(0, number)
 
+    @staticmethod
+    def _normalize_plan(value: object, role: str = "user") -> str:
+        if role == "admin":
+            return "internal"
+        plan = AuthService._clean(value).lower()
+        return plan if plan in USER_PLANS else "standard"
+
+    @staticmethod
+    def _plan_policy(plan: object) -> dict[str, object]:
+        normalized_plan = AuthService._normalize_plan(plan)
+        base = USER_PLANS.get(normalized_plan, USER_PLANS["standard"])
+        return {
+            "plan": normalized_plan,
+            "plan_label": base["label"],
+            "max_images_per_request": base["max_images_per_request"],
+            "allowed_models": list(base["allowed_models"]),
+            "allow_image_edit": bool(base["allow_image_edit"]),
+        }
+
     def _normalize_item(self, raw: object) -> dict[str, object] | None:
         if not isinstance(raw, dict):
             return None
@@ -67,10 +113,12 @@ class AuthService:
         quota_limit = self._normalize_quota_limit(raw.get("quota_limit"))
         quota_used = min(self._normalize_quota_used(raw.get("quota_used")), quota_limit) if quota_limit is not None else self._normalize_quota_used(raw.get("quota_used"))
         raw_key = self._clean(raw.get("raw_key"))
+        plan = self._normalize_plan(raw.get("plan"), role)
         return {
             "id": item_id,
             "name": name,
             "role": role,
+            "plan": plan,
             "key_hash": key_hash,
             "raw_key": raw_key or None,
             "enabled": bool(raw.get("enabled", True)),
@@ -97,10 +145,12 @@ class AuthService:
         quota_limit = AuthService._normalize_quota_limit(item.get("quota_limit"))
         quota_used = AuthService._normalize_quota_used(item.get("quota_used"))
         quota_remaining = None if quota_limit is None else max(0, quota_limit - quota_used)
+        policy = AuthService._plan_policy(item.get("plan"))
         public_item = {
             "id": item.get("id"),
             "name": item.get("name"),
             "role": item.get("role"),
+            **policy,
             "enabled": bool(item.get("enabled", True)),
             "created_at": item.get("created_at"),
             "last_used_at": item.get("last_used_at"),
@@ -117,14 +167,16 @@ class AuthService:
             items = [item for item in self._items if role is None or item.get("role") == role]
             return [self._public_item(item, include_raw_key=include_raw_key) for item in items]
 
-    def create_key(self, *, role: AuthRole, name: str = "", quota_limit: int | None = None) -> tuple[dict[str, object], str]:
+    def create_key(self, *, role: AuthRole, name: str = "", quota_limit: int | None = None, plan: str = "standard") -> tuple[dict[str, object], str]:
         normalized_name = self._clean(name) or ("管理员密钥" if role == "admin" else "普通用户")
         normalized_quota_limit = self._normalize_quota_limit(quota_limit)
+        normalized_plan = self._normalize_plan(plan, role)
         raw_key = f"sk-{secrets.token_urlsafe(24)}"
         item = {
             "id": uuid.uuid4().hex[:12],
             "name": normalized_name,
             "role": role,
+            "plan": normalized_plan,
             "key_hash": _hash_key(raw_key),
             "raw_key": raw_key,
             "enabled": True,
@@ -179,6 +231,8 @@ class AuthService:
                     next_item["name"] = self._clean(updates.get("name")) or next_item.get("name") or "普通用户"
                 if "enabled" in updates and updates.get("enabled") is not None:
                     next_item["enabled"] = bool(updates.get("enabled"))
+                if "plan" in updates and updates.get("plan") is not None:
+                    next_item["plan"] = self._normalize_plan(updates.get("plan"), str(next_item.get("role") or "user"))
                 if "quota_limit" in updates:
                     next_item["quota_limit"] = self._normalize_quota_limit(updates.get("quota_limit"))
                 if "quota_used" in updates and updates.get("quota_used") is not None:
@@ -190,6 +244,21 @@ class AuthService:
                 self._save()
                 return self._public_item(next_item)
         return None
+
+    def ensure_request_allowed(self, identity: dict[str, object], *, model: str, amount: int, mode: str) -> None:
+        if identity.get("role") != "user":
+            return
+        policy = self._plan_policy(identity.get("plan"))
+        requested = max(1, int(amount or 1))
+        max_images = int(policy.get("max_images_per_request") or 1)
+        if requested > max_images:
+            raise ValueError(f"current plan allows at most {max_images} images per request")
+        if mode == "edit" and not bool(policy.get("allow_image_edit")):
+            raise ValueError("current plan does not allow image edits")
+        normalized_model = self._clean(model)
+        allowed_models = [self._clean(item) for item in policy.get("allowed_models", []) if self._clean(item)]
+        if allowed_models and normalized_model and normalized_model not in allowed_models:
+            raise ValueError(f"current plan does not allow model {normalized_model}")
 
     def ensure_quota_available(self, identity: dict[str, object], amount: int) -> None:
         if identity.get("role") != "user":

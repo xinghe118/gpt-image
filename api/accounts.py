@@ -26,11 +26,13 @@ from services.sub2api_service import (
 
 class UserKeyCreateRequest(BaseModel):
     name: str = ""
+    plan: str = "standard"
     quota_limit: int | None = None
 
 
 class UserKeyUpdateRequest(BaseModel):
     name: str | None = None
+    plan: str | None = None
     enabled: bool | None = None
     quota_limit: int | None = None
     quota_used: int | None = None
@@ -113,7 +115,7 @@ def create_router() -> APIRouter:
     @router.post("/api/auth/users")
     async def create_user_key(body: UserKeyCreateRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        item, raw_key = auth_service.create_key(role="user", name=body.name, quota_limit=body.quota_limit)
+        item, raw_key = auth_service.create_key(role="user", name=body.name, quota_limit=body.quota_limit, plan=body.plan)
         return {"item": item, "key": raw_key, "items": auth_service.list_keys(role="user", include_raw_key=True)}
 
     @router.post("/api/auth/users/{key_id}")

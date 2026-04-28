@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { createUserKey, deleteUserKey, fetchUserKeys, regenerateUserKey, updateUserKey, type UserKey } from "@/lib/api";
+import { createUserKey, deleteUserKey, fetchUserKeys, regenerateUserKey, updateUserKey, type UserKey, type UserPlan } from "@/lib/api";
 
 function formatDateTime(value?: string | null) {
   if (!value) {
@@ -51,6 +51,21 @@ function formatQuota(value: number | null | undefined) {
   return value === null || value === undefined ? "不限" : String(value);
 }
 
+const userPlanOptions: Array<{
+  value: UserPlan;
+  label: string;
+  description: string;
+}> = [
+  { value: "trial", label: "免费体验", description: "单次 1 张，仅文生图，限制 GPT Image 2" },
+  { value: "standard", label: "标准版", description: "单次 2 张，支持文生图和图生图" },
+  { value: "pro", label: "高级版", description: "单次 4 张，开放全部图片模型" },
+  { value: "internal", label: "内部账号", description: "内部测试和运营使用，开放全部图片能力" },
+];
+
+function planLabel(value?: string | null) {
+  return userPlanOptions.find((item) => item.value === value)?.label || "标准版";
+}
+
 export function UserKeysCard() {
   const didLoadRef = useRef(false);
   const [items, setItems] = useState<UserKey[]>([]);
@@ -58,7 +73,9 @@ export function UserKeysCard() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<UserKey | null>(null);
   const [name, setName] = useState("");
+  const [plan, setPlan] = useState<UserPlan>("standard");
   const [quotaLimit, setQuotaLimit] = useState("");
+  const [editPlan, setEditPlan] = useState<UserPlan>("standard");
   const [editQuotaLimit, setEditQuotaLimit] = useState("");
   const [editQuotaUsed, setEditQuotaUsed] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -89,10 +106,11 @@ export function UserKeysCard() {
   const handleCreate = async () => {
     setIsCreating(true);
     try {
-      const data = await createUserKey(name.trim(), parseQuotaInput(quotaLimit));
+      const data = await createUserKey(name.trim(), parseQuotaInput(quotaLimit), plan);
       setItems(data.items);
       setRevealedKey(data.key);
       setName("");
+      setPlan("standard");
       setQuotaLimit("");
       setIsDialogOpen(false);
       toast.success("用户密钥已创建");
@@ -105,6 +123,7 @@ export function UserKeysCard() {
 
   const openQuotaDialog = (item: UserKey) => {
     setEditingItem(item);
+    setEditPlan(item.plan || "standard");
     setEditQuotaLimit(item.quota_limit === null ? "" : String(item.quota_limit));
     setEditQuotaUsed(String(item.quota_used || 0));
   };
@@ -119,6 +138,7 @@ export function UserKeysCard() {
       const nextQuotaLimit = parseQuotaInput(editQuotaLimit);
       const nextQuotaUsed = parseQuotaInput(editQuotaUsed) ?? 0;
       const data = await updateUserKey(editingItem.id, {
+        plan: editPlan,
         quota_limit: nextQuotaLimit,
         quota_used: nextQuotaUsed,
       });
@@ -259,6 +279,9 @@ export function UserKeysCard() {
                         <Badge variant={item.enabled ? "success" : "secondary"} className="rounded-md">
                           {item.enabled ? "已启用" : "已禁用"}
                         </Badge>
+                        <Badge variant="info" className="rounded-md">
+                          {item.plan_label || planLabel(item.plan)}
+                        </Badge>
                         <button
                           type="button"
                           className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-500 transition hover:bg-stone-200 hover:text-stone-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-stone-100 disabled:hover:text-stone-500"
@@ -292,6 +315,8 @@ export function UserKeysCard() {
                             <Gauge className="size-3.5" />
                             额度 {formatQuota(item.quota_limit)}
                           </span>
+                          <span>单次 {item.max_images_per_request || 1} 张</span>
+                          <span>{item.allow_image_edit ? "可图生图" : "仅文生图"}</span>
                           <span>已用 {item.quota_used || 0}</span>
                           <span>剩余 {formatQuota(item.quota_remaining)}</span>
                         </div>
@@ -387,6 +412,19 @@ export function UserKeysCard() {
             />
             <p className="text-xs text-stone-500">每成功生成 1 张图片扣除 1 点额度。</p>
           </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-stone-700">用户套餐</label>
+            <select
+              value={plan}
+              onChange={(event) => setPlan(event.target.value as UserPlan)}
+              className="h-11 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-700 outline-none focus:border-cyan-300"
+            >
+              {userPlanOptions.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-stone-500">{userPlanOptions.find((item) => item.value === plan)?.description}</p>
+          </div>
           <DialogFooter>
             <Button
               type="button"
@@ -418,6 +456,19 @@ export function UserKeysCard() {
               修改「{editingItem?.name}」可使用的图片额度。总额度留空表示不限制；已用额度可手动校正。
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-stone-700">用户套餐</label>
+            <select
+              value={editPlan}
+              onChange={(event) => setEditPlan(event.target.value as UserPlan)}
+              className="h-11 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-700 outline-none focus:border-cyan-300"
+            >
+              {userPlanOptions.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-stone-500">{userPlanOptions.find((item) => item.value === editPlan)?.description}</p>
+          </div>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <label className="text-sm font-medium text-stone-700">总额度</label>

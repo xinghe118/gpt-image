@@ -112,6 +112,13 @@ def _normalize_image_amount(value: object, default: int = 1) -> int:
         return default
 
 
+def _ensure_image_request_allowed(identity: dict[str, object], *, model: str, amount: int, mode: str) -> None:
+    try:
+        auth_service.ensure_request_allowed(identity, model=model, amount=amount, mode=mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+
+
 def _has_image_generation_tool(payload: dict[str, object]) -> bool:
     tools = payload.get("tools")
     if not isinstance(tools, list):
@@ -276,6 +283,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         identity = require_identity(authorization)
         started_at = time.perf_counter()
         base_url = resolve_image_base_url(request)
+        _ensure_image_request_allowed(identity, model=body.model, amount=body.n, mode="generate")
         try:
             auth_service.ensure_quota_available(identity, body.n)
         except ValueError as exc:
@@ -344,6 +352,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         identity = require_identity(authorization)
         started_at = time.perf_counter()
         base_url = resolve_image_base_url(request)
+        _ensure_image_request_allowed(identity, model=body.model, amount=body.n, mode="generate")
         try:
             auth_service.ensure_quota_available(identity, body.n)
         except ValueError as exc:
@@ -383,6 +392,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         started_at = time.perf_counter()
         if n < 1 or n > 4:
             raise HTTPException(status_code=400, detail={"error": "n must be between 1 and 4"})
+        _ensure_image_request_allowed(identity, model=model, amount=n, mode="edit")
         try:
             auth_service.ensure_quota_available(identity, n)
         except ValueError as exc:
@@ -464,6 +474,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         started_at = time.perf_counter()
         if n < 1 or n > 4:
             raise HTTPException(status_code=400, detail={"error": "n must be between 1 and 4"})
+        _ensure_image_request_allowed(identity, model=model, amount=n, mode="edit")
         try:
             auth_service.ensure_quota_available(identity, n)
         except ValueError as exc:
@@ -514,6 +525,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         is_image_request = is_image_chat_request(payload)
         image_amount = _normalize_image_amount(payload.get("n"))
         if is_image_request:
+            _ensure_image_request_allowed(identity, model=str(payload.get("model") or ""), amount=image_amount, mode="generate")
             try:
                 auth_service.ensure_quota_available(identity, image_amount)
             except ValueError as exc:
@@ -587,6 +599,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         payload = body.model_dump(mode="python")
         is_image_request = _has_image_generation_tool(payload)
         if is_image_request:
+            _ensure_image_request_allowed(identity, model=str(payload.get("model") or ""), amount=1, mode="generate")
             try:
                 auth_service.ensure_quota_available(identity, 1)
             except ValueError as exc:

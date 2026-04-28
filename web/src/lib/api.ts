@@ -4,6 +4,7 @@ export type AccountType = "Free" | "Plus" | "ProLite" | "Pro" | "Team" | "API";
 export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
 export type ImageModel = "auto" | "gpt-image-1" | "gpt-image-2" | "codex-gpt-image-2";
 export type AuthRole = "admin" | "user";
+export type UserPlan = "trial" | "standard" | "pro" | "internal";
 
 export type Account = {
   id: string;
@@ -86,6 +87,11 @@ export type LoginResponse = {
   quota_limit?: number | null;
   quota_used?: number | null;
   quota_remaining?: number | null;
+  plan?: UserPlan;
+  plan_label?: string;
+  max_images_per_request?: number;
+  allowed_models?: string[];
+  allow_image_edit?: boolean;
 };
 
 export type UserKey = {
@@ -93,6 +99,11 @@ export type UserKey = {
   name: string;
   key?: string | null;
   role: "user";
+  plan: UserPlan;
+  plan_label?: string;
+  max_images_per_request?: number;
+  allowed_models?: string[];
+  allow_image_edit?: boolean;
   enabled: boolean;
   created_at: string | null;
   last_used_at: string | null;
@@ -108,6 +119,11 @@ export type CurrentIdentity = {
   quota_limit: number | null;
   quota_used: number;
   quota_remaining: number | null;
+  plan?: UserPlan;
+  plan_label?: string;
+  max_images_per_request?: number;
+  allowed_models?: string[];
+  allow_image_edit?: boolean;
 };
 
 export type LibraryImageItem = {
@@ -361,10 +377,10 @@ export async function fetchUserKeys() {
   return httpRequest<{ items: UserKey[] }>("/api/auth/users");
 }
 
-export async function createUserKey(name: string, quotaLimit?: number | null) {
+export async function createUserKey(name: string, quotaLimit?: number | null, plan: UserPlan = "standard") {
   return httpRequest<{ item: UserKey; key: string; items: UserKey[] }>("/api/auth/users", {
     method: "POST",
-    body: { name, quota_limit: quotaLimit ?? null },
+    body: { name, plan, quota_limit: quotaLimit ?? null },
   });
 }
 
@@ -374,7 +390,7 @@ export async function fetchCurrentIdentity() {
 
 export async function updateUserKey(
   keyId: string,
-  updates: { enabled?: boolean; name?: string; quota_limit?: number | null; quota_used?: number },
+  updates: { enabled?: boolean; name?: string; plan?: UserPlan; quota_limit?: number | null; quota_used?: number },
 ) {
   return httpRequest<{ item: UserKey; items: UserKey[] }>(`/api/auth/users/${keyId}`, {
     method: "POST",

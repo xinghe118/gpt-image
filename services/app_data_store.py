@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from sqlalchemy import Column, Integer, String, Text, create_engine, inspect, or_, text
+from sqlalchemy import Column, Integer, String, Text, create_engine, func, inspect, or_, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -504,8 +504,65 @@ class AppDataStore:
                 },
             )
 
+        if self._database_enabled:
+            session = self._session()
+            try:
+                image_query = session.query(
+                    ImageLibraryDataModel.project_id,
+                    func.count(ImageLibraryDataModel.id),
+                    func.max(ImageLibraryDataModel.created_at),
+                )
+                if not include_all:
+                    image_query = image_query.filter(ImageLibraryDataModel.subject_id == self._clean(subject_id))
+                for project_id, image_count, last_created_at in image_query.group_by(ImageLibraryDataModel.project_id).all():
+                    current = bucket(project_id)
+                    current["image_count"] += int(image_count or 0)
+                    created_at = self._clean(last_created_at)
+                    if created_at > self._clean(current.get("last_activity_at")):
+                        current["last_activity_at"] = created_at
+
+                conversation_query = session.query(
+                    ConversationDataModel.project_id,
+                    func.count(ConversationDataModel.id),
+                    func.max(ConversationDataModel.updated_at),
+                )
+                if not include_all:
+                    conversation_query = conversation_query.filter(ConversationDataModel.subject_id == self._clean(subject_id))
+                for project_id, conversation_count, last_updated_at in conversation_query.group_by(ConversationDataModel.project_id).all():
+                    current = bucket(project_id)
+                    current["conversation_count"] += int(conversation_count or 0)
+                    updated_at = self._clean(last_updated_at)
+                    if updated_at > self._clean(current.get("last_activity_at")):
+                        current["last_activity_at"] = updated_at
+
+                for project_id in list(stats.keys()):
+                    cover_query = session.query(ImageLibraryDataModel)
+                    if project_id == "default":
+                        cover_query = cover_query.filter(
+                            or_(
+                                ImageLibraryDataModel.project_id == "default",
+                                ImageLibraryDataModel.project_id == "",
+                            )
+                        )
+                    else:
+                        cover_query = cover_query.filter(ImageLibraryDataModel.project_id == project_id)
+                    if not include_all:
+                        cover_query = cover_query.filter(ImageLibraryDataModel.subject_id == self._clean(subject_id))
+                    row = cover_query.order_by(ImageLibraryDataModel.created_at.desc()).first()
+                    if row is None:
+                        continue
+                    try:
+                        data = json.loads(row.data)
+                    except Exception:
+                        data = {}
+                    if isinstance(data, dict):
+                        stats[project_id]["cover_url"] = self._clean(data.get("thumb_url") or data.get("image_url"))
+                return stats
+            finally:
+                session.close()
+
         for item in self.load_library():
-            if not include_all and self._clean(item.get("subject_id")) != subject_id:
+            if not include_all and self._clean(item.get("subject_id")) != self._clean(subject_id):
                 continue
             current = bucket(self._clean(item.get("project_id")) or "default")
             current["image_count"] += 1
@@ -516,7 +573,7 @@ class AppDataStore:
                 current["cover_url"] = self._clean(item.get("thumb_url") or item.get("image_url"))
 
         for item in self.load_conversations():
-            if not include_all and self._clean(item.get("subject_id")) != subject_id:
+            if not include_all and self._clean(item.get("subject_id")) != self._clean(subject_id):
                 continue
             current = bucket(self._clean(item.get("project_id") or item.get("projectId")) or "default")
             current["conversation_count"] += 1

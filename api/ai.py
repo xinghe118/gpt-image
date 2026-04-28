@@ -5,7 +5,7 @@ import time
 import uuid
 import base64
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Iterator
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -246,6 +246,47 @@ def _decode_job_images(items: object) -> list[tuple[bytes, str, str]]:
                 )
             )
     return images
+
+
+def _stream_chunk_has_image_result(chunk: object) -> bool:
+    if not isinstance(chunk, dict):
+        return False
+    data = chunk.get("data")
+    if isinstance(data, list) and any(isinstance(item, dict) for item in data):
+        return True
+    item = chunk.get("item")
+    if (
+            isinstance(item, dict)
+            and item.get("type") == "image_generation_call"
+            and (item.get("result") or item.get("status") == "completed")
+    ):
+        return True
+    response = chunk.get("response")
+    output = response.get("output") if isinstance(response, dict) else None
+    if isinstance(output, list):
+        return any(
+            isinstance(item, dict)
+            and item.get("type") == "image_generation_call"
+            and (item.get("result") or item.get("status") == "completed")
+            for item in output
+        )
+    return False
+
+
+def _stream_with_deferred_quota(
+        chunks: Iterator[dict[str, object]],
+        *,
+        identity: dict[str, object],
+        amount: int,
+        consume_on_completion: bool = False,
+) -> Iterator[dict[str, object]]:
+    has_result = False
+    for chunk in chunks:
+        if _stream_chunk_has_image_result(chunk):
+            has_result = True
+        yield chunk
+    if has_result or consume_on_completion:
+        auth_service.consume_quota(identity, amount)
 
 
 def _normalize_image_amount(value: object, default: int = 1) -> int:
@@ -494,11 +535,14 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 duration_ms=int((time.perf_counter() - started_at) * 1000),
                 metadata={"stream": True, "n": body.n, "size": body.size},
             )
-            auth_service.consume_quota(identity, body.n)
             return StreamingResponse(
                 sse_json_stream(
-                    chatgpt_service.stream_image_generation(
-                        body.prompt, body.model, body.n, body.size, body.response_format, base_url
+                    _stream_with_deferred_quota(
+                        chatgpt_service.stream_image_generation(
+                            body.prompt, body.model, body.n, body.size, body.response_format, base_url
+                        ),
+                        identity=identity,
+                        amount=body.n,
                     )
                 ),
                 media_type="text/event-stream",
@@ -634,9 +678,14 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 duration_ms=int((time.perf_counter() - started_at) * 1000),
                 metadata={"stream": True, "n": n, "size": size, "image_count": len(images)},
             )
-            auth_service.consume_quota(identity, n)
             return StreamingResponse(
-                sse_json_stream(chatgpt_service.stream_image_edit(prompt, images, model, n, size, response_format, base_url)),
+                sse_json_stream(
+                    _stream_with_deferred_quota(
+                        chatgpt_service.stream_image_edit(prompt, images, model, n, size, response_format, base_url),
+                        identity=identity,
+                        amount=n,
+                    )
+                ),
                 media_type="text/event-stream",
             )
         try:
@@ -750,13 +799,40 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
     @router.post("/api/image/jobs/{job_id}/retry")
     async def retry_image_job(job_id: str, authorization: str | None = Header(default=None)):
         identity = require_identity(authorization)
+        existing_job = image_job_service.get(job_id)
+        if existing_job is None:
+            raise HTTPException(status_code=404, detail={"error": "image job not found"})
+        if identity.get("role") != "admin" and str(existing_job.get("subject_id") or "") != str(identity.get("id") or ""):
+            raise HTTPException(status_code=403, detail={"error": "image job permission denied"})
+        payload = existing_job.get("payload")
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"error": "image job cannot be retried"})
+
+        subject_id = str(existing_job.get("subject_id") or "")
+        retry_identity = identity
+        if subject_id and subject_id != str(identity.get("id") or ""):
+            owner_identity = auth_service.get_identity_by_id(subject_id)
+            if owner_identity is None:
+                raise HTTPException(status_code=409, detail={"error": "image job owner key is missing or disabled"})
+            retry_identity = owner_identity
+        elif identity.get("role") == "user":
+            retry_identity = auth_service.get_identity_by_id(str(identity.get("id") or "")) or identity
+
+        retry_kind = str(payload.get("kind") or existing_job.get("kind") or "")
+        retry_model = str(payload.get("model") or "gpt-image-2")
+        retry_amount = _normalize_image_amount(payload.get("n"))
+        retry_mode = "edit" if retry_kind == "images.edits" else "generate"
+        _ensure_image_request_allowed(retry_identity, model=retry_model, amount=retry_amount, mode=retry_mode)
+        try:
+            auth_service.ensure_quota_available(retry_identity, retry_amount)
+        except ValueError as exc:
+            raise HTTPException(status_code=429, detail={"error": str(exc)}) from exc
 
         def build_retry_task(job: dict[str, object]) -> Callable[[], dict[str, object]] | None:
             payload = job.get("payload")
             if not isinstance(payload, dict):
                 return None
-            job_identity = job.get("identity")
-            run_identity = job_identity if isinstance(job_identity, dict) and job_identity.get("id") else identity
+            run_identity = retry_identity
             base_url = str(payload.get("base_url") or "").strip()
             if not base_url:
                 return None
@@ -767,7 +843,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                     identity=run_identity,
                     prompt=str(payload.get("prompt") or ""),
                     model=str(payload.get("model") or "gpt-image-2"),
-                    n=int(payload.get("n") or 1),
+                    n=_normalize_image_amount(payload.get("n")),
                     size=str(payload.get("size") or "") or None,
                     response_format=str(payload.get("response_format") or "url"),
                     base_url=base_url,
@@ -785,7 +861,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                     prompt=str(payload.get("prompt") or ""),
                     images=images,
                     model=str(payload.get("model") or "gpt-image-2"),
-                    n=int(payload.get("n") or 1),
+                    n=_normalize_image_amount(payload.get("n")),
                     size=str(payload.get("size") or "") or None,
                     response_format=str(payload.get("response_format") or "url"),
                     base_url=base_url,
@@ -845,7 +921,6 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                         metadata={"stream": True},
                     )
                     raise_image_quota_error(exc)
-                auth_service.consume_quota(identity, image_amount)
             activity_log_service.record(
                 "chat.completions",
                 status="accepted",
@@ -856,8 +931,16 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 duration_ms=int((time.perf_counter() - started_at) * 1000),
                 metadata={"stream": True},
             )
+            stream = chatgpt_service.stream_chat_completion(payload)
+            if is_image_request:
+                stream = _stream_with_deferred_quota(
+                    stream,
+                    identity=identity,
+                    amount=image_amount,
+                    consume_on_completion=True,
+                )
             return StreamingResponse(
-                sse_json_stream(chatgpt_service.stream_chat_completion(payload)),
+                sse_json_stream(stream),
                 media_type="text/event-stream",
             )
         try:
@@ -902,8 +985,6 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             except ValueError as exc:
                 raise HTTPException(status_code=429, detail={"error": str(exc)}) from exc
         if bool(payload.get("stream")):
-            if is_image_request:
-                auth_service.consume_quota(identity, 1)
             activity_log_service.record(
                 "responses",
                 status="accepted",
@@ -914,8 +995,16 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 duration_ms=int((time.perf_counter() - started_at) * 1000),
                 metadata={"stream": True},
             )
+            stream = chatgpt_service.stream_response(payload)
+            if is_image_request:
+                stream = _stream_with_deferred_quota(
+                    stream,
+                    identity=identity,
+                    amount=1,
+                    consume_on_completion=True,
+                )
             return StreamingResponse(
-                sse_json_stream(chatgpt_service.stream_response(payload)),
+                sse_json_stream(stream),
                 media_type="text/event-stream",
             )
         try:

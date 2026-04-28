@@ -167,6 +167,16 @@ class AuthService:
             items = [item for item in self._items if role is None or item.get("role") == role]
             return [self._public_item(item, include_raw_key=include_raw_key) for item in items]
 
+    def get_identity_by_id(self, key_id: str) -> dict[str, object] | None:
+        normalized_id = self._clean(key_id)
+        if not normalized_id:
+            return None
+        with self._lock:
+            for item in self._items:
+                if item.get("id") == normalized_id and bool(item.get("enabled", True)):
+                    return self._public_item(item)
+        return None
+
     def create_key(self, *, role: AuthRole, name: str = "", quota_limit: int | None = None, plan: str = "standard") -> tuple[dict[str, object], str]:
         normalized_name = self._clean(name) or ("管理员密钥" if role == "admin" else "普通用户")
         normalized_quota_limit = self._normalize_quota_limit(quota_limit)
@@ -311,6 +321,8 @@ class AuthService:
             if len(self._items) == before:
                 return False
             self._save()
+            if hasattr(self.storage, "delete_auth_keys"):
+                self.storage.delete_auth_keys([normalized_id])
             return True
 
     def authenticate(self, raw_key: str) -> dict[str, object] | None:

@@ -470,6 +470,8 @@ class AccountService:
                 self._index = 0
             if removed:
                 self._save_accounts()
+                if hasattr(self.storage, "delete_accounts"):
+                    self.storage.delete_accounts(list(target_set))
             items = self._public_items(self._accounts)
         return {"removed": removed, "items": items}
 

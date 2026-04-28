@@ -95,19 +95,39 @@ class DatabaseStorageBackend(StorageBackend):
     ) -> None:
         session = self.Session()
         try:
-            session.query(model).delete()
             for item in items:
                 if not isinstance(item, dict):
                     continue
                 key_value = str(item.get(source_key) or "").strip()
                 if not key_value:
                     continue
-                session.add(
-                    model(
-                        **{target_key or source_key: key_value},
-                        data=json.dumps(item, ensure_ascii=False),
-                    )
-                )
+                storage_key = target_key or source_key
+                row = session.query(model).filter(getattr(model, storage_key) == key_value).one_or_none()
+                payload = json.dumps(item, ensure_ascii=False)
+                if row is None:
+                    session.add(model(**{storage_key: key_value}, data=payload))
+                else:
+                    row.data = payload
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    def delete_accounts(self, access_tokens: list[str]) -> None:
+        self._delete_rows(AccountModel, "access_token", access_tokens)
+
+    def delete_auth_keys(self, key_ids: list[str]) -> None:
+        self._delete_rows(AuthKeyModel, "key_id", key_ids)
+
+    def _delete_rows(self, model: type[AccountModel] | type[AuthKeyModel], column_name: str, values: list[str]) -> None:
+        keys = [str(value or "").strip() for value in values if str(value or "").strip()]
+        if not keys:
+            return
+        session = self.Session()
+        try:
+            session.query(model).filter(getattr(model, column_name).in_(keys)).delete(synchronize_session=False)
             session.commit()
         except Exception as e:
             session.rollback()

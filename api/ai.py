@@ -18,7 +18,6 @@ from services.auth_service import auth_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
 from services.image_library_service import image_library_service
 from services.image_concurrency_service import ImageConcurrencyLimitError, image_concurrency_service
-from services.quota_ledger_service import quota_ledger_service
 from utils.helper import is_image_chat_request, sse_json_stream
 
 
@@ -214,15 +213,6 @@ def _run_generation_request(
         records: list[dict[str, object]] = []
         if result_count > 0:
             auth_service.consume_quota(identity, result_count)
-            quota_ledger_service.record_charge(
-                identity=identity,
-                amount=result_count,
-                event="images.generations",
-                model=model,
-                mode="generate",
-                project_id=project_id or "",
-                prompt=prompt,
-            )
             records = image_library_service.record_images(
                 identity=identity,
                 prompt=prompt,
@@ -297,15 +287,6 @@ def _run_edit_request(
         records: list[dict[str, object]] = []
         if result_count > 0:
             auth_service.consume_quota(identity, result_count)
-            quota_ledger_service.record_charge(
-                identity=identity,
-                amount=result_count,
-                event="images.edits",
-                model=model,
-                mode="edit",
-                project_id=project_id or "",
-                prompt=prompt,
-            )
             records = image_library_service.record_images(
                 identity=identity,
                 prompt=prompt,
@@ -413,17 +394,6 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 metadata={"stream": True, "n": body.n, "size": body.size},
             )
             auth_service.consume_quota(identity, body.n)
-            quota_ledger_service.record_charge(
-                identity=identity,
-                amount=body.n,
-                event="images.generations",
-                model=body.model,
-                mode="generate",
-                project_id=body.project_id or "",
-                prompt=body.prompt,
-                status="accepted",
-                reason="stream_accepted",
-            )
             return StreamingResponse(
                 sse_json_stream(
                     chatgpt_service.stream_image_generation(
@@ -544,17 +514,6 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 metadata={"stream": True, "n": n, "size": size, "image_count": len(images)},
             )
             auth_service.consume_quota(identity, n)
-            quota_ledger_service.record_charge(
-                identity=identity,
-                amount=n,
-                event="images.edits",
-                model=model,
-                mode="edit",
-                project_id=project_id or "",
-                prompt=prompt,
-                status="accepted",
-                reason="stream_accepted",
-            )
             return StreamingResponse(
                 sse_json_stream(chatgpt_service.stream_image_edit(prompt, images, model, n, size, response_format, base_url)),
                 media_type="text/event-stream",
@@ -694,16 +653,6 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                     )
                     raise_image_quota_error(exc)
                 auth_service.consume_quota(identity, image_amount)
-                quota_ledger_service.record_charge(
-                    identity=identity,
-                    amount=image_amount,
-                    event="chat.completions",
-                    model=str(payload.get("model") or ""),
-                    mode="generate",
-                    prompt=payload.get("prompt") or "",
-                    status="accepted",
-                    reason="stream_accepted",
-                )
             activity_log_service.record(
                 "chat.completions",
                 status="accepted",
@@ -722,14 +671,6 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             result = await run_in_threadpool(chatgpt_service.create_chat_completion, payload)
             if is_image_request:
                 auth_service.consume_quota(identity, image_amount)
-                quota_ledger_service.record_charge(
-                    identity=identity,
-                    amount=image_amount,
-                    event="chat.completions",
-                    model=str(payload.get("model") or ""),
-                    mode="generate",
-                    prompt=payload.get("prompt") or "",
-                )
             activity_log_service.record(
                 "chat.completions",
                 route="/v1/chat/completions",
@@ -770,16 +711,6 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         if bool(payload.get("stream")):
             if is_image_request:
                 auth_service.consume_quota(identity, 1)
-                quota_ledger_service.record_charge(
-                    identity=identity,
-                    amount=1,
-                    event="responses",
-                    model=str(payload.get("model") or ""),
-                    mode="generate",
-                    prompt=payload.get("input") or "",
-                    status="accepted",
-                    reason="stream_accepted",
-                )
             activity_log_service.record(
                 "responses",
                 status="accepted",
@@ -798,14 +729,6 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             result = await run_in_threadpool(chatgpt_service.create_response, payload)
             if is_image_request:
                 auth_service.consume_quota(identity, 1)
-                quota_ledger_service.record_charge(
-                    identity=identity,
-                    amount=1,
-                    event="responses",
-                    model=str(payload.get("model") or ""),
-                    mode="generate",
-                    prompt=payload.get("input") or "",
-                )
             activity_log_service.record(
                 "responses",
                 route="/v1/responses",

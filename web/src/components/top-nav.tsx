@@ -15,6 +15,7 @@ const adminNavItems = [
   { href: "/library", label: "作品库", icon: Images },
   { href: "/admin", label: "概览", icon: LayoutDashboard },
   { href: "/admin/logs", label: "日志", icon: FileText },
+  { href: "/users", label: "用户", icon: UsersRound },
   { href: "/accounts", label: "账号池", icon: UsersRound },
   { href: "/settings", label: "系统", icon: Settings },
 ];

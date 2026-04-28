@@ -12,7 +12,6 @@ import { ImportBrowserDialog } from "./components/import-browser-dialog";
 import { SettingsHeader } from "./components/settings-header";
 import { StorageCard } from "./components/storage-card";
 import { Sub2APIConnections } from "./components/sub2api-connections";
-import { UserKeysCard } from "./components/user-keys-card";
 import { useSettingsStore } from "./store";
 
 function SettingsDataController() {
@@ -94,7 +93,6 @@ function SettingsPageContent() {
             <div className="space-y-2 text-sm">
               <AnchorPill label="基础配置" />
               <AnchorPill label="持久化存储" />
-              <AnchorPill label="用户密钥" />
               <AnchorPill label="CPA 导入" />
               <AnchorPill label="sub2api 导入" />
             </div>
@@ -104,10 +102,7 @@ function SettingsPageContent() {
         <div className="space-y-5">
           <ConfigCard />
           <StorageCard />
-          <div className="grid gap-5 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <UserKeysCard />
-            <CPAPoolsCard />
-          </div>
+          <CPAPoolsCard />
           <Sub2APIConnections />
         </div>
       </section>

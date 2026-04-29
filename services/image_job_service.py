@@ -14,8 +14,12 @@ class ImageJobService:
 
     def __init__(self):
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
         self._jobs: dict[str, dict[str, object]] = {}
         self._tasks: dict[str, Callable[[], dict[str, object]]] = {}
+        self._task_builder: Callable[[dict[str, object]], Callable[[], dict[str, object]] | None] | None = None
+        self._stop_event = threading.Event()
+        self._worker_thread: threading.Thread | None = None
         self._restore_persisted_jobs()
 
     @staticmethod
@@ -61,10 +65,69 @@ class ImageJobService:
 
     def _restore_persisted_jobs(self) -> None:
         for job in app_data_store.load_image_jobs(300, include_all=True):
-            if job.get("status") in {"pending", "running"}:
+            if job.get("status") == "running":
                 job = self._fail_stale_job(job, "任务在服务重启时中断，请重新提交或重试。")
             if isinstance(job.get("job_id"), str):
                 self._jobs[str(job["job_id"])] = job
+
+    def set_task_builder(
+            self,
+            builder: Callable[[dict[str, object]], Callable[[], dict[str, object]] | None] | None,
+    ) -> None:
+        with self._condition:
+            self._task_builder = builder
+            self._condition.notify_all()
+
+    def start_worker(self) -> None:
+        with self._condition:
+            if self._worker_thread and self._worker_thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._worker_thread = threading.Thread(target=self._worker_loop, name="image-job-worker", daemon=True)
+            self._worker_thread.start()
+            self._condition.notify_all()
+
+    def stop_worker(self, timeout: float = 1.0) -> None:
+        self._stop_event.set()
+        with self._condition:
+            self._condition.notify_all()
+        thread = self._worker_thread
+        if thread:
+            thread.join(timeout=timeout)
+
+    def _get_pending_job_for_worker(self) -> tuple[str, Callable[[], dict[str, object]]] | None:
+        for job_id, job in list(self._jobs.items()):
+            if job.get("status") != "pending":
+                continue
+            task = self._tasks.get(job_id)
+            if task is None and self._task_builder is not None:
+                task = self._task_builder(dict(job))
+                if task is not None:
+                    self._tasks[job_id] = task
+            if task is not None:
+                return job_id, task
+            self._jobs[job_id] = {
+                **job,
+                "status": "failed",
+                "stage": "failed",
+                "progress_message": "任务缺少可恢复信息，请重新提交。",
+                "error": "任务缺少可恢复信息，请重新提交。",
+                "updated_at": self._now_iso(),
+                "finished_at": self._now_iso(),
+                "retryable": False,
+            }
+            app_data_store.save_image_job(self._jobs[job_id])
+        return None
+
+    def _worker_loop(self) -> None:
+        while not self._stop_event.is_set():
+            with self._condition:
+                pending = self._get_pending_job_for_worker()
+                if pending is None:
+                    self._condition.wait(timeout=1.0)
+                    continue
+            job_id, task = pending
+            self._run(job_id, task)
 
     def create(
             self,
@@ -122,8 +185,8 @@ class ImageJobService:
                         self._jobs.pop(old_job_id, None)
                         self._tasks.pop(old_job_id, None)
 
-        thread = threading.Thread(target=self._run, args=(job_id, actual_task), name=f"image-job-{job_id[:8]}", daemon=True)
-        thread.start()
+        with self._condition:
+            self._condition.notify_all()
         return self.get(job_id) or job
 
     def update_progress(
@@ -255,8 +318,8 @@ class ImageJobService:
                 "retryable": False,
             }
             app_data_store.save_image_job(self._jobs[job_id])
-        thread = threading.Thread(target=self._run, args=(job_id, task), name=f"image-job-retry-{job_id[:8]}", daemon=True)
-        thread.start()
+        with self._condition:
+            self._condition.notify_all()
         return self.get(job_id)
 
 

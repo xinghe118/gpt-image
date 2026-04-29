@@ -17,6 +17,7 @@ from services.account_service import account_service
 from services.chatgpt_service import ChatGPTService
 from services.config import config
 from services.error_messages import public_error_payload
+from services.image_job_service import image_job_service
 
 
 class CacheControlStaticFiles(StaticFiles):
@@ -34,10 +35,12 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI):
         stop_event = Event()
         thread = start_limited_account_watcher(stop_event)
+        image_job_service.start_worker()
         try:
             yield
         finally:
             stop_event.set()
+            image_job_service.stop_worker()
             thread.join(timeout=1)
 
     app = FastAPI(title="GPT Image", version=app_version, lifespan=lifespan)

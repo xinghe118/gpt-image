@@ -36,6 +36,7 @@ import {
   deleteImageConversations,
   getImageConversationStats,
   listImageConversations,
+  saveImageConversation,
   saveImageConversations,
   type ImageConversation,
   type ImageConversationMode,
@@ -1131,7 +1132,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     ]);
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
-    await saveImageConversations(nextConversations);
+    await saveImageConversation(conversation);
   };
 
   const updateConversation = useCallback(
@@ -1149,7 +1150,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       conversationsRef.current = nextConversations;
       setConversations(nextConversations);
       if (options.persist !== false) {
-        await saveImageConversations(nextConversations);
+        await saveImageConversation(nextConversation);
       }
     },
     [],

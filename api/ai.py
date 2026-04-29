@@ -160,6 +160,60 @@ def _emit_image_job_progress(
         progress(stage, message, percent)
 
 
+def _resolve_job_identity(job: dict[str, object]) -> dict[str, object] | None:
+    subject_id = str(job.get("subject_id") or "").strip()
+    identity = auth_service.get_identity_by_id(subject_id) if subject_id else None
+    if identity is not None:
+        return identity
+    stored_identity = job.get("identity")
+    return stored_identity if isinstance(stored_identity, dict) else None
+
+
+def _build_image_job_task(
+        chatgpt_service: ChatGPTService,
+        job: dict[str, object],
+        identity: dict[str, object] | None = None,
+) -> Callable[[], dict[str, object]] | None:
+    job_id = str(job.get("job_id") or "")
+    payload = job.get("payload")
+    if not job_id or not isinstance(payload, dict):
+        return None
+    run_identity = identity or _resolve_job_identity(job)
+    if run_identity is None:
+        return None
+    base_url = str(payload.get("base_url") or "").strip()
+    if not base_url:
+        return None
+    kind = str(payload.get("kind") or job.get("kind") or "")
+    common = {
+        "chatgpt_service": chatgpt_service,
+        "identity": run_identity,
+        "prompt": str(payload.get("prompt") or ""),
+        "model": str(payload.get("model") or "gpt-image-2"),
+        "n": _normalize_image_amount(payload.get("n")),
+        "size": str(payload.get("size") or "") or None,
+        "response_format": str(payload.get("response_format") or "url"),
+        "base_url": base_url,
+        "started_at": time.perf_counter(),
+        "project_id": str(payload.get("project_id") or "") or None,
+        "wait_for_slot": True,
+        "progress": lambda stage, message, percent=None: image_job_service.update_progress(
+            job_id,
+            stage=stage,
+            message=message,
+            progress_percent=percent,
+        ),
+    }
+    if kind == "images.generations":
+        return lambda: _run_generation_request(**common)
+    if kind == "images.edits":
+        images = _decode_job_images(payload.get("images"))
+        if not images:
+            return None
+        return lambda: _run_edit_request(images=images, **common)
+    return None
+
+
 def _run_generation_request(
         *,
         chatgpt_service: ChatGPTService,
@@ -317,6 +371,7 @@ def _run_edit_request(
 
 def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
     router = APIRouter()
+    image_job_service.set_task_builder(lambda job: _build_image_job_task(chatgpt_service, job))
 
     @router.get("/v1/models")
     async def list_models(authorization: str | None = Header(default=None)):
@@ -436,24 +491,23 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 "base_url": base_url,
                 "project_id": body.project_id,
             },
-            task_factory=lambda job_id: lambda: _run_generation_request(
-                chatgpt_service=chatgpt_service,
-                identity=identity,
-                prompt=body.prompt,
-                model=body.model,
-                n=body.n,
-                size=body.size,
-                response_format=body.response_format,
-                base_url=base_url,
-                started_at=started_at,
-                project_id=body.project_id,
-                wait_for_slot=True,
-                progress=lambda stage, message, percent=None: image_job_service.update_progress(
-                    job_id,
-                    stage=stage,
-                    message=message,
-                    progress_percent=percent,
-                ),
+            task_factory=lambda job_id: _build_image_job_task(
+                chatgpt_service,
+                {
+                    "job_id": job_id,
+                    "kind": "images.generations",
+                    "payload": {
+                        "kind": "images.generations",
+                        "prompt": body.prompt,
+                        "model": body.model,
+                        "n": body.n,
+                        "size": body.size,
+                        "response_format": body.response_format,
+                        "base_url": base_url,
+                        "project_id": body.project_id,
+                    },
+                },
+                identity,
             ),
         )
         return {"job": job}
@@ -604,25 +658,24 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 "project_id": project_id,
                 "images": _encode_job_images(images),
             },
-            task_factory=lambda job_id: lambda: _run_edit_request(
-                chatgpt_service=chatgpt_service,
-                identity=identity,
-                prompt=prompt,
-                images=images,
-                model=model,
-                n=n,
-                size=size,
-                response_format=response_format,
-                base_url=base_url,
-                started_at=started_at,
-                project_id=project_id,
-                wait_for_slot=True,
-                progress=lambda stage, message, percent=None: image_job_service.update_progress(
-                    job_id,
-                    stage=stage,
-                    message=message,
-                    progress_percent=percent,
-                ),
+            task_factory=lambda job_id: _build_image_job_task(
+                chatgpt_service,
+                {
+                    "job_id": job_id,
+                    "kind": "images.edits",
+                    "payload": {
+                        "kind": "images.edits",
+                        "prompt": prompt,
+                        "model": model,
+                        "n": n,
+                        "size": size,
+                        "response_format": response_format,
+                        "base_url": base_url,
+                        "project_id": project_id,
+                        "images": _encode_job_images(images),
+                    },
+                },
+                identity,
             ),
         )
         return {"job": job}
@@ -682,52 +735,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             base_url = str(payload.get("base_url") or "").strip()
             if not base_url:
                 return None
-            kind = str(payload.get("kind") or job.get("kind") or "")
-            if kind == "images.generations":
-                return lambda: _run_generation_request(
-                    chatgpt_service=chatgpt_service,
-                    identity=run_identity,
-                    prompt=str(payload.get("prompt") or ""),
-                    model=str(payload.get("model") or "gpt-image-2"),
-                    n=_normalize_image_amount(payload.get("n")),
-                    size=str(payload.get("size") or "") or None,
-                    response_format=str(payload.get("response_format") or "url"),
-                    base_url=base_url,
-                    started_at=time.perf_counter(),
-                    project_id=str(payload.get("project_id") or "") or None,
-                    wait_for_slot=True,
-                    progress=lambda stage, message, percent=None: image_job_service.update_progress(
-                        job_id,
-                        stage=stage,
-                        message=message,
-                        progress_percent=percent,
-                    ),
-                )
-            if kind == "images.edits":
-                images = _decode_job_images(payload.get("images"))
-                if not images:
-                    return None
-                return lambda: _run_edit_request(
-                    chatgpt_service=chatgpt_service,
-                    identity=run_identity,
-                    prompt=str(payload.get("prompt") or ""),
-                    images=images,
-                    model=str(payload.get("model") or "gpt-image-2"),
-                    n=_normalize_image_amount(payload.get("n")),
-                    size=str(payload.get("size") or "") or None,
-                    response_format=str(payload.get("response_format") or "url"),
-                    base_url=base_url,
-                    started_at=time.perf_counter(),
-                    project_id=str(payload.get("project_id") or "") or None,
-                    wait_for_slot=True,
-                    progress=lambda stage, message, percent=None: image_job_service.update_progress(
-                        job_id,
-                        stage=stage,
-                        message=message,
-                        progress_percent=percent,
-                    ),
-                )
-            return None
+            return _build_image_job_task(chatgpt_service, job, run_identity)
 
         try:
             job = image_job_service.retry(job_id, identity, build_retry_task)

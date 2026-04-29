@@ -83,6 +83,36 @@ class ProjectPermissionTests(unittest.TestCase):
 
         self.assertEqual([item["id"] for item in items], ["conversation-a"])
 
+    def test_append_and_update_turn_are_incremental_and_scoped(self):
+        owner = self.identity("user-a")
+        self.conversation_service.upsert_conversation(owner, {"id": "conversation-a", "title": "A", "turns": []})
+
+        item = self.conversation_service.append_turn(
+            owner,
+            "conversation-a",
+            {"id": "turn-1", "status": "queued", "images": [{"id": "image-1", "status": "loading"}]},
+        )
+        self.assertEqual(len(item["turns"]), 1)
+        self.assertEqual(item["turns"][0]["id"], "turn-1")
+
+        updated = self.conversation_service.update_turn(
+            owner,
+            "conversation-a",
+            "turn-1",
+            {"status": "success", "images": [{"id": "image-1", "status": "success", "url": "https://example.com/a.png"}]},
+        )
+
+        self.assertEqual(updated["turns"][0]["status"], "success")
+        self.assertEqual(updated["turns"][0]["images"][0]["url"], "https://example.com/a.png")
+
+    def test_intruder_cannot_incrementally_update_conversation(self):
+        owner = self.identity("user-a")
+        intruder = self.identity("user-b")
+        self.conversation_service.upsert_conversation(owner, {"id": "conversation-a", "title": "A", "turns": []})
+
+        with self.assertRaises(PermissionError):
+            self.conversation_service.append_turn(intruder, "conversation-a", {"id": "turn-1"})
+
 
 if __name__ == "__main__":
     unittest.main()

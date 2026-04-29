@@ -65,12 +65,14 @@ class ImageJobServiceTests(unittest.TestCase):
                 kind="images.generations",
                 payload={"prompt": "hello"},
             )
+            service.start_worker()
             current = None
             for _ in range(50):
                 current = service.get(str(job["job_id"]))
                 if current and current.get("status") == "failed":
                     break
                 time.sleep(0.01)
+            service.stop_worker()
 
         self.assertIsNotNone(current)
         self.assertEqual(current["status"], "failed")
@@ -102,17 +104,49 @@ class ImageJobServiceTests(unittest.TestCase):
                 kind="images.generations",
                 payload={"prompt": "hello"},
             )
+            service.start_worker()
             current = None
             for _ in range(50):
                 current = service.get(str(job["job_id"]))
                 if current and current.get("status") == "succeeded":
                     break
                 time.sleep(0.01)
+            service.stop_worker()
 
         self.assertIsNotNone(current)
         self.assertEqual(current["status"], "succeeded")
         self.assertEqual(current["stage"], "completed")
         self.assertEqual(current["progress_percent"], 100)
+
+    def test_pending_job_can_be_rebuilt_by_worker_task_builder(self):
+        store = FakeJobStore()
+        with mock.patch("services.image_job_service.app_data_store", store):
+            service = ImageJobService()
+            job = service.create(
+                identity={"id": "user-1", "name": "User", "role": "user"},
+                task=lambda: {"data": [{"url": "https://example.com/original.png"}]},
+                kind="images.generations",
+                payload={"prompt": "hello"},
+            )
+            job_id = str(job["job_id"])
+            service.stop_worker()
+
+            restored = ImageJobService()
+            restored.set_task_builder(
+                lambda item: (lambda: {"data": [{"url": f"https://example.com/{item['job_id']}.png"}]})
+            )
+            restored.start_worker()
+            current = None
+            for _ in range(50):
+                current = restored.get(job_id)
+                if current and current.get("status") == "succeeded":
+                    break
+                time.sleep(0.01)
+            restored.stop_worker()
+
+        self.assertIsNotNone(current)
+        self.assertEqual(current["status"], "succeeded")
+        self.assertEqual(current["result"], {"data": [{"url": f"https://example.com/{job_id}.png"}]})
 
 
 if __name__ == "__main__":

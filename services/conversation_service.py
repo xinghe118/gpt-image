@@ -138,6 +138,74 @@ class ConversationService:
             self._save(next_items)
         return self._public_item(item)
 
+    def append_turn(self, identity: dict[str, object], conversation_id: str, turn: dict[str, Any]) -> dict[str, Any]:
+        normalized_id = self._clean(conversation_id)
+        if not normalized_id:
+            raise ValueError("conversation id is required")
+        if not isinstance(turn, dict) or not self._clean(turn.get("id")):
+            raise ValueError("turn id is required")
+        subject_id = self._clean(identity.get("id"))
+        now = _now_iso()
+        with self._lock:
+            items = self._load()
+            updated: dict[str, Any] | None = None
+            for item in items:
+                if self._clean(item.get("id")) != normalized_id:
+                    continue
+                if self._clean(item.get("subject_id")) != subject_id:
+                    raise PermissionError("conversation permission denied")
+                turns = item.get("turns") if isinstance(item.get("turns"), list) else []
+                turn_id = self._clean(turn.get("id"))
+                item["turns"] = [*[
+                    current for current in turns if self._clean(current.get("id") if isinstance(current, dict) else "") != turn_id
+                ], turn]
+                item["updatedAt"] = self._clean(turn.get("createdAt") or turn.get("created_at")) or now
+                updated = self._public_item(item)
+                break
+            if updated is None:
+                raise ValueError("conversation not found")
+            self._save(items)
+            return updated
+
+    def update_turn(self, identity: dict[str, object], conversation_id: str, turn_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        normalized_id = self._clean(conversation_id)
+        normalized_turn_id = self._clean(turn_id)
+        if not normalized_id or not normalized_turn_id:
+            raise ValueError("conversation id and turn id are required")
+        subject_id = self._clean(identity.get("id"))
+        now = _now_iso()
+        allowed_fields = {"status", "error", "images", "updatedAt", "updated_at"}
+        clean_updates = {key: value for key, value in updates.items() if key in allowed_fields}
+        with self._lock:
+            items = self._load()
+            updated: dict[str, Any] | None = None
+            for item in items:
+                if self._clean(item.get("id")) != normalized_id:
+                    continue
+                if self._clean(item.get("subject_id")) != subject_id:
+                    raise PermissionError("conversation permission denied")
+                turns = item.get("turns") if isinstance(item.get("turns"), list) else []
+                next_turns: list[dict[str, Any]] = []
+                found_turn = False
+                for turn in turns:
+                    if not isinstance(turn, dict):
+                        continue
+                    if self._clean(turn.get("id")) != normalized_turn_id:
+                        next_turns.append(turn)
+                        continue
+                    found_turn = True
+                    next_turns.append({**turn, **clean_updates})
+                if not found_turn:
+                    raise ValueError("turn not found")
+                item["turns"] = next_turns
+                item["updatedAt"] = self._clean(clean_updates.get("updatedAt") or clean_updates.get("updated_at")) or now
+                updated = self._public_item(item)
+                break
+            if updated is None:
+                raise ValueError("conversation not found")
+            self._save(items)
+            return updated
+
     def delete_conversation(self, identity: dict[str, object], conversation_id: str) -> bool:
         normalized_id = self._clean(conversation_id)
         subject_id = self._clean(identity.get("id"))

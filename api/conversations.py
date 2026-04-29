@@ -19,6 +19,14 @@ class ConversationMoveRequest(BaseModel):
     project_id: str = ""
 
 
+class ConversationTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class ConversationTurnUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
 def create_router() -> APIRouter:
     router = APIRouter()
 
@@ -57,6 +65,37 @@ def create_router() -> APIRouter:
         payload["id"] = conversation_id
         try:
             item = conversation_service.upsert_conversation(identity, payload)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        return {"item": item}
+
+    @router.post("/api/conversations/{conversation_id}/turns")
+    async def append_turn(
+        conversation_id: str,
+        body: ConversationTurnRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        identity = require_identity(authorization)
+        try:
+            item = conversation_service.append_turn(identity, conversation_id, body.model_dump(mode="python"))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        return {"item": item}
+
+    @router.patch("/api/conversations/{conversation_id}/turns/{turn_id}")
+    async def update_turn(
+        conversation_id: str,
+        turn_id: str,
+        body: ConversationTurnUpdateRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        identity = require_identity(authorization)
+        try:
+            item = conversation_service.update_turn(identity, conversation_id, turn_id, body.model_dump(mode="python"))
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
         except ValueError as exc:

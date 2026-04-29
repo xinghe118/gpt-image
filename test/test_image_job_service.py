@@ -89,7 +89,7 @@ class ImageJobServiceTests(unittest.TestCase):
                     service.update_progress(
                         job_id,
                         stage="upstream_request",
-                        message="正在提交到上游图片服务。",
+                        message="正在生成",
                         progress_percent=35,
                     )
                     return {"data": [{"url": "https://example.com/image.png"}]}

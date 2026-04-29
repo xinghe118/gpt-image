@@ -1632,7 +1632,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                       ? {
                           id: image.id,
                           status: "loading" as const,
-                          progressMessage: "等待重新处理...",
+                          progressMessage: "等待处理",
                           progressPercent: 0,
                         }
                       : image,
@@ -1705,7 +1705,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       images: Array.from({ length: parsedCount }, (_, index) => ({
         id: `${turnId}-${index}`,
         status: "loading" as const,
-        progressMessage: "等待当前对话开始处理...",
+        progressMessage: "等待处理",
         progressPercent: 0,
       })),
       createdAt: now,

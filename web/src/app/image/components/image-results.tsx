@@ -223,8 +223,7 @@ export function ImageResults({
                             )}
                           </div>
                           <p className="text-sm">
-                            {image.progressMessage ||
-                              (turn.status === "queued" ? "已加入当前对话队列..." : "正在处理图片...")}
+                            {image.progressMessage || (turn.status === "queued" ? "等待处理" : "正在生成")}
                           </p>
                           {typeof image.progressPercent === "number" ? (
                             <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/70">

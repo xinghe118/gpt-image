@@ -176,14 +176,14 @@ def _run_generation_request(
         progress: ImageJobProgressCallback | None = None,
 ) -> dict[str, object]:
     try:
-        _emit_image_job_progress(progress, "waiting_slot", "正在等待可用生成通道。", 20)
+        _emit_image_job_progress(progress, "waiting_slot", "等待处理", 20)
         with image_concurrency_service.acquire(identity, wait=wait_for_slot):
-            _emit_image_job_progress(progress, "upstream_request", "正在提交到上游图片服务。", 35)
+            _emit_image_job_progress(progress, "upstream_request", "正在生成", 35)
             result = chatgpt_service.generate_with_pool(prompt, model, n, size, "b64_json", base_url)
         result_count = len(result.get("data") or [])
         records: list[dict[str, object]] = []
         if result_count > 0:
-            _emit_image_job_progress(progress, "saving_result", "正在保存作品并同步到作品库。", 82)
+            _emit_image_job_progress(progress, "saving_result", "正在生成", 82)
             auth_service.consume_quota(identity, result_count)
             records = image_library_service.record_images(
                 identity=identity,
@@ -254,14 +254,14 @@ def _run_edit_request(
         progress: ImageJobProgressCallback | None = None,
 ) -> dict[str, object]:
     try:
-        _emit_image_job_progress(progress, "waiting_slot", "正在等待可用编辑通道。", 20)
+        _emit_image_job_progress(progress, "waiting_slot", "等待处理", 20)
         with image_concurrency_service.acquire(identity, wait=wait_for_slot):
-            _emit_image_job_progress(progress, "upstream_request", "正在提交参考图到上游图片服务。", 35)
+            _emit_image_job_progress(progress, "upstream_request", "正在生成", 35)
             result = chatgpt_service.edit_with_pool(prompt, images, model, n, size, "b64_json", base_url)
         result_count = len(result.get("data") or [])
         records: list[dict[str, object]] = []
         if result_count > 0:
-            _emit_image_job_progress(progress, "saving_result", "正在保存编辑结果并同步到作品库。", 82)
+            _emit_image_job_progress(progress, "saving_result", "正在生成", 82)
             auth_service.consume_quota(identity, result_count)
             records = image_library_service.record_images(
                 identity=identity,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckSquare, Copy, Download, Images, LoaderCircle, Pencil, Search, Sparkles, Square, Trash2, X } from "lucide-react";
+import { Copy, Download, Images, LoaderCircle, Pencil, Search, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -62,9 +62,6 @@ export default function LibraryPage() {
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [isDeletingItem, setIsDeletingItem] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
-  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
-  const [batchProjectId, setBatchProjectId] = useState("");
-  const [isBatchBusy, setIsBatchBusy] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [total, setTotal] = useState(0);
@@ -85,9 +82,6 @@ export default function LibraryPage() {
         project_id: projectId || undefined,
       });
       setItems((current) => (append ? [...current, ...data.items] : data.items));
-      if (!append) {
-        setSelectedItemIds([]);
-      }
       setHasMore(data.has_more);
       setTotal(Number(data.total || 0));
     } catch (error) {
@@ -113,20 +107,11 @@ export default function LibraryPage() {
     setMoveProjectId(selectedItem?.project_id || "default");
   }, [selectedItem?.id, selectedItem?.project_id]);
 
-  useEffect(() => {
-    if (!batchProjectId && projects.length > 0) {
-      setBatchProjectId(projectId || projects[0].id);
-    }
-  }, [batchProjectId, projectId, projects]);
-
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       return !mode || item.mode === mode;
     });
   }, [items, mode]);
-  const selectedIdSet = useMemo(() => new Set(selectedItemIds), [selectedItemIds]);
-  const selectedCount = selectedItemIds.length;
-  const isVisibleAllSelected = filteredItems.length > 0 && filteredItems.every((item) => selectedIdSet.has(item.id));
 
   const downloadImage = (item: LibraryImageItem) => {
     const link = document.createElement("a");
@@ -168,70 +153,6 @@ export default function LibraryPage() {
     }
   };
 
-  const toggleSelectedItem = (id: string) => {
-    setSelectedItemIds((current) => (current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id]));
-  };
-
-  const toggleSelectVisible = () => {
-    const visibleIds = filteredItems.map((item) => item.id);
-    setSelectedItemIds((current) => {
-      if (visibleIds.length > 0 && visibleIds.every((id) => current.includes(id))) {
-        return current.filter((id) => !visibleIds.includes(id));
-      }
-      return Array.from(new Set([...current, ...visibleIds]));
-    });
-  };
-
-  const moveSelectedItems = async () => {
-    if (selectedItemIds.length === 0) {
-      toast.error("请先选择作品");
-      return;
-    }
-    if (!batchProjectId) {
-      toast.error("请选择目标项目");
-      return;
-    }
-    setIsBatchBusy(true);
-    try {
-      const ids = [...selectedItemIds];
-      const results = await Promise.all(ids.map((id) => moveLibraryItemToProject(id, batchProjectId)));
-      const itemMap = new Map(results.map((result) => [result.item.id, result.item]));
-      setItems((current) =>
-        current
-          .map((item) => itemMap.get(item.id) ?? item)
-          .filter((item) => !projectId || item.project_id === projectId || !ids.includes(item.id)),
-      );
-      setSelectedItemIds([]);
-      toast.success(`已移动 ${results.length} 张作品`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "批量移动失败");
-    } finally {
-      setIsBatchBusy(false);
-    }
-  };
-
-  const deleteSelectedItems = async () => {
-    if (selectedItemIds.length === 0) {
-      return;
-    }
-    setIsBatchBusy(true);
-    try {
-      const ids = [...selectedItemIds];
-      await Promise.all(ids.map((id) => deleteLibraryItem(id)));
-      setItems((current) => current.filter((item) => !ids.includes(item.id)));
-      setTotal((current) => Math.max(0, current - ids.length));
-      setSelectedItemIds([]);
-      if (selectedItem && ids.includes(selectedItem.id)) {
-        setSelectedItem(null);
-      }
-      toast.success(`已删除 ${ids.length} 张作品`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "批量删除失败");
-    } finally {
-      setIsBatchBusy(false);
-    }
-  };
-
   const moveSelectedItem = async () => {
     if (!selectedItem || !moveProjectId) {
       toast.error("请选择目标项目");
@@ -259,7 +180,6 @@ export default function LibraryPage() {
       await deleteLibraryItem(selectedItem.id);
       setItems((current) => current.filter((item) => item.id !== selectedItem.id));
       setTotal((current) => Math.max(0, current - 1));
-      setSelectedItemIds((current) => current.filter((id) => id !== selectedItem.id));
       setSelectedItem(null);
       setIsDeleteConfirmOpen(false);
       toast.success("作品已删除");
@@ -301,7 +221,7 @@ export default function LibraryPage() {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_auto_auto_auto]">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_auto_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <Input
@@ -353,42 +273,8 @@ export default function LibraryPage() {
           <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" onClick={() => void loadItems()}>
             应用筛选
           </Button>
-          <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" onClick={toggleSelectVisible}>
-            {isVisibleAllSelected ? <CheckSquare className="size-4" /> : <Square className="size-4" />}
-            {isVisibleAllSelected ? "取消本页" : "选择本页"}
-          </Button>
         </div>
       </div>
-
-      {selectedCount > 0 ? (
-        <div className="flex flex-col gap-3 rounded-2xl border border-cyan-200 bg-cyan-50/70 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-          <div className="text-sm font-medium text-cyan-900">已选择 {selectedCount} 张作品</div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <select
-              value={batchProjectId}
-              onChange={(event) => setBatchProjectId(event.target.value)}
-              className="h-10 min-w-[180px] rounded-lg border border-cyan-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-cyan-300"
-            >
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  移动到：{project.name}
-                </option>
-              ))}
-            </select>
-            <Button variant="outline" className="h-10 rounded-lg border-cyan-200 bg-white text-cyan-700" disabled={isBatchBusy} onClick={() => void moveSelectedItems()}>
-              {isBatchBusy ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              批量移动
-            </Button>
-            <Button variant="outline" className="h-10 rounded-lg border-rose-200 bg-white text-rose-600 hover:bg-rose-50" disabled={isBatchBusy} onClick={() => void deleteSelectedItems()}>
-              <Trash2 className="size-4" />
-              批量删除
-            </Button>
-            <Button variant="outline" className="h-10 rounded-lg border-slate-200 bg-white" disabled={isBatchBusy} onClick={() => setSelectedItemIds([])}>
-              取消选择
-            </Button>
-          </div>
-        </div>
-      ) : null}
 
       {isLoading ? (
         <div className="grid min-h-[360px] place-items-center rounded-2xl border border-slate-200 bg-white">
@@ -405,24 +291,7 @@ export default function LibraryPage() {
       ) : (
         <div className="columns-1 gap-4 space-y-4 sm:columns-2 xl:columns-3 2xl:columns-4">
           {filteredItems.map((item) => (
-            <article
-              key={item.id}
-              className={cn(
-                "relative break-inside-avoid overflow-hidden rounded-2xl border bg-white shadow-sm",
-                selectedIdSet.has(item.id) ? "border-cyan-300 ring-2 ring-cyan-100" : "border-slate-200",
-              )}
-            >
-              <button
-                type="button"
-                className={cn(
-                  "absolute left-3 top-3 z-10 grid size-9 place-items-center rounded-lg border bg-white/95 shadow-sm transition",
-                  selectedIdSet.has(item.id) ? "border-cyan-200 text-cyan-700" : "border-slate-200 text-slate-500 hover:text-slate-900",
-                )}
-                onClick={() => toggleSelectedItem(item.id)}
-                aria-label={selectedIdSet.has(item.id) ? "取消选择作品" : "选择作品"}
-              >
-                {selectedIdSet.has(item.id) ? <CheckSquare className="size-4" /> : <Square className="size-4" />}
-              </button>
+            <article key={item.id} className="break-inside-avoid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <button type="button" className="group block w-full cursor-zoom-in bg-slate-100" onClick={() => setSelectedItem(item)}>
                 <img src={previewSrc(item)} alt={item.prompt} loading="lazy" className="h-auto w-full transition group-hover:brightness-95" />
               </button>

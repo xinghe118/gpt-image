@@ -40,6 +40,7 @@ import {
   saveImageConversations,
   type ImageConversation,
   type ImageConversationMode,
+  type ImageEnhancementLevel,
   type ImageReferenceStrength,
   type ImageTurn,
   type ImageTurnStatus,
@@ -123,6 +124,33 @@ const REFERENCE_STRENGTH_OPTIONS: Array<{
     value: "high",
     title: "高",
     description: "尽量保持原图主体、位置和细节，只做必要修改",
+  },
+];
+
+const PHOTO_ENHANCEMENT_OPTIONS: Array<{
+  value: ImageEnhancementLevel;
+  title: string;
+  description: string;
+}> = [
+  {
+    value: "off",
+    title: "关闭",
+    description: "按普通图生图处理。",
+  },
+  {
+    value: "natural",
+    title: "自然",
+    description: "轻微提高清晰度、光线和色彩，尽量保持原片质感。",
+  },
+  {
+    value: "standard",
+    title: "高清",
+    description: "提升锐度、细节、噪点、肤色和整体观感，适合日常照片。",
+  },
+  {
+    value: "strong",
+    title: "精修",
+    description: "更明显地优化画质、光影和质感，适合成片或商业精修。",
   },
 ];
 
@@ -438,6 +466,29 @@ function buildEditPrompt(userPrompt: string, strength: ImageReferenceStrength) {
   ].join("\n");
 }
 
+function buildPhotoEnhancementPrompt(userPrompt: string, strength: ImageReferenceStrength, level: ImageEnhancementLevel) {
+  const normalizedPrompt = userPrompt.trim();
+  const levelInstruction =
+    level === "natural"
+      ? "增强档位：自然。只做轻微画质增强，改善清晰度、曝光、白平衡、轻微噪点和色彩层次，保留原片真实感。"
+      : level === "strong"
+        ? "增强档位：精修。明显提升画质、细节、光影、肤色、质感和画面完成度，但不要改变人物身份、五官、服装、主体结构和场景关系。"
+        : "增强档位：高清。提升照片清晰度、锐度、细节、噪点控制、自然光影、肤色和整体观感，保持画面可信。";
+  const strengthInstruction =
+    strength === "high"
+      ? "保持要求：高。严格保持参考图中的人物身份、脸部特征、构图、姿态、场景和主体关系。"
+      : strength === "low"
+        ? "保持要求：中低。允许轻微重新整理光影和细节，但不要改变核心主体。"
+        : "保持要求：中。保留参考图主要主体、构图和空间关系，只优化画质表现。";
+  return [
+    "请基于上传的参考照片进行照片质量增强。",
+    levelInstruction,
+    strengthInstruction,
+    normalizedPrompt ? `用户补充要求：${normalizedPrompt}` : "用户补充要求：无，按照片增强目标执行。",
+    "输出要求：自然真实、高清干净、边缘完整、细节可信；不要生成水印、乱码文字、多余人物、畸形肢体或与原图无关的新主体。",
+  ].join("\n");
+}
+
 async function recoverConversationHistory(items: ImageConversation[]) {
   const normalized = items.map((conversation) => {
     let changed = false;
@@ -513,6 +564,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [showImageModelSelector, setShowImageModelSelector] = useState(true);
   const [imageSize, setImageSize] = useState("");
   const [referenceStrength, setReferenceStrength] = useState<ImageReferenceStrength>("medium");
+  const [enhancementLevel, setEnhancementLevel] = useState<ImageEnhancementLevel>("off");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isMobileParamsOpen, setIsMobileParamsOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
@@ -1438,7 +1490,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           try {
             const finalPrompt =
               queuedTurn.mode === "edit"
-                ? buildEditPrompt(queuedTurn.prompt, queuedTurn.referenceStrength || "medium")
+                ? queuedTurn.enhancementLevel && queuedTurn.enhancementLevel !== "off"
+                  ? buildPhotoEnhancementPrompt(
+                      queuedTurn.prompt,
+                      queuedTurn.referenceStrength || "medium",
+                      queuedTurn.enhancementLevel,
+                    )
+                  : buildEditPrompt(queuedTurn.prompt, queuedTurn.referenceStrength || "medium")
                 : queuedTurn.prompt;
             const first = await runImageJob({
               mode: queuedTurn.mode,
@@ -1703,6 +1761,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       count: parsedCount,
       size: imageSize,
       referenceStrength: imageMode === "edit" ? referenceStrength : undefined,
+      enhancementLevel: imageMode === "edit" ? enhancementLevel : undefined,
       images: Array.from({ length: parsedCount }, (_, index) => ({
         id: `${turnId}-${index}`,
         status: "loading" as const,
@@ -1970,6 +2029,27 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                     </div>
                   </div>
                 ) : null}
+                {imageMode === "edit" ? (
+                  <div>
+                    <div className="mb-2 text-xs font-medium text-slate-500">照片增强</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {PHOTO_ENHANCEMENT_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          className={`h-10 rounded-lg text-xs font-medium ${
+                            enhancementLevel === option.value ? "bg-amber-600 text-white" : "bg-slate-100 text-slate-600"
+                          }`}
+                          onClick={() => setEnhancementLevel(option.value)}
+                        >
+                          {option.title}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                      {PHOTO_ENHANCEMENT_OPTIONS.find((option) => option.value === enhancementLevel)?.description}
+                    </p>
+                  </div>
+                ) : null}
                 <div>
                   <div className="mb-2 text-xs font-medium text-slate-500">创作模板</div>
                   <div className="grid gap-2">
@@ -2145,11 +2225,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               availableQuota={availableQuota}
               activeTaskCount={activeTaskCount}
               referenceStrength={referenceStrength}
+              enhancementLevel={enhancementLevel}
               referenceImages={referenceImages}
               textareaRef={textareaRef}
               fileInputRef={fileInputRef}
               onPromptChange={setImagePrompt}
               onReferenceStrengthChange={setReferenceStrength}
+              onEnhancementLevelChange={setEnhancementLevel}
               onEnhancePrompt={handleEnhancePrompt}
               onSubmit={handleSubmit}
               onPickReferenceImage={() => fileInputRef.current?.click()}
@@ -2283,6 +2365,27 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                   <p className="mt-2 text-xs leading-5 text-slate-500">
                     {REFERENCE_STRENGTH_OPTIONS.find((option) => option.value === referenceStrength)?.description}
+                  </p>
+                </div>
+              ) : null}
+              {imageMode === "edit" ? (
+                <div>
+                  <div className="mb-2 text-xs font-medium text-slate-500">照片增强</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {PHOTO_ENHANCEMENT_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        className={`h-9 rounded-lg text-xs font-medium ${
+                          enhancementLevel === option.value ? "bg-amber-600 text-white" : "bg-slate-100 text-slate-600"
+                        }`}
+                        onClick={() => setEnhancementLevel(option.value)}
+                      >
+                        {option.title}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    {PHOTO_ENHANCEMENT_OPTIONS.find((option) => option.value === enhancementLevel)?.description}
                   </p>
                 </div>
               ) : null}

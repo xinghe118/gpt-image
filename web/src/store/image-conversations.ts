@@ -7,6 +7,7 @@ import type { ImageModel } from "@/lib/api";
 
 export type ImageConversationMode = "generate" | "edit";
 export type ImageReferenceStrength = "low" | "medium" | "high";
+export type ImageEnhancementLevel = "off" | "natural" | "standard" | "strong";
 
 export type StoredReferenceImage = {
   name: string;
@@ -36,6 +37,7 @@ export type ImageTurn = {
   count: number;
   size: string;
   referenceStrength?: ImageReferenceStrength;
+  enhancementLevel?: ImageEnhancementLevel;
   images: StoredImage[];
   createdAt: string;
   status: ImageTurnStatus;

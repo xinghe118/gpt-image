@@ -5,7 +5,7 @@ import { useMemo, useState, type ClipboardEvent, type RefObject } from "react";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { ImageConversationMode, ImageReferenceStrength } from "@/store/image-conversations";
+import type { ImageConversationMode, ImageEnhancementLevel, ImageReferenceStrength } from "@/store/image-conversations";
 
 type ImageComposerProps = {
   mode: ImageConversationMode;
@@ -13,11 +13,13 @@ type ImageComposerProps = {
   availableQuota: string;
   activeTaskCount: number;
   referenceStrength: ImageReferenceStrength;
+  enhancementLevel: ImageEnhancementLevel;
   referenceImages: Array<{ name: string; dataUrl: string }>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onPromptChange: (value: string) => void;
   onReferenceStrengthChange: (value: ImageReferenceStrength) => void;
+  onEnhancementLevelChange: (value: ImageEnhancementLevel) => void;
   onEnhancePrompt: () => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
@@ -31,11 +33,13 @@ export function ImageComposer({
   availableQuota,
   activeTaskCount,
   referenceStrength,
+  enhancementLevel,
   referenceImages,
   textareaRef,
   fileInputRef,
   onPromptChange,
   onReferenceStrengthChange,
+  onEnhancementLevelChange,
   onEnhancePrompt,
   onSubmit,
   onPickReferenceImage,
@@ -124,6 +128,31 @@ export function ImageComposer({
                       referenceStrength === value ? "bg-cyan-700 text-white" : "bg-white text-cyan-700"
                     }`}
                     onClick={() => onReferenceStrengthChange(value as ImageReferenceStrength)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-amber-900">照片增强</span>
+                <span className="text-[10px] font-medium text-amber-700">提升清晰度、光线和质感</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {[
+                  ["off", "关闭"],
+                  ["natural", "自然"],
+                  ["standard", "高清"],
+                  ["strong", "精修"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`h-7 rounded-lg px-2 text-xs font-medium transition ${
+                      enhancementLevel === value ? "bg-amber-600 text-white" : "bg-white text-amber-700"
+                    }`}
+                    onClick={() => onEnhancementLevelChange(value as ImageEnhancementLevel)}
                   >
                     {label}
                   </button>

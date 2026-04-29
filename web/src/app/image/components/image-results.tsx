@@ -222,7 +222,18 @@ export function ImageResults({
                               <LoaderCircle className="size-5 animate-spin" />
                             )}
                           </div>
-                          <p className="text-sm">{turn.status === "queued" ? "已加入当前对话队列..." : "正在处理图片..."}</p>
+                          <p className="text-sm">
+                            {image.progressMessage ||
+                              (turn.status === "queued" ? "已加入当前对话队列..." : "正在处理图片...")}
+                          </p>
+                          {typeof image.progressPercent === "number" ? (
+                            <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/70">
+                              <div
+                                className="h-full rounded-full bg-cyan-500 transition-all"
+                                style={{ width: `${Math.max(4, Math.min(100, image.progressPercent))}%` }}
+                              />
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     );

@@ -261,6 +261,9 @@ export type ImageJob = {
   metadata?: Record<string, unknown>;
   result?: { created: number; data: GeneratedImageData[] } | null;
   error?: string;
+  stage?: string;
+  progress_message?: string;
+  progress_percent?: number;
   created_at?: string;
   updated_at?: string;
   started_at?: string;

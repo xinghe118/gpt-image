@@ -45,12 +45,15 @@ class ImageJobService:
 
     def _fail_stale_job(self, job: dict[str, object], message: str | None = None) -> dict[str, object]:
         now = self._now_iso()
+        error_message = message or "任务长时间没有更新，已自动标记为失败。请重新提交或点击重试。"
         updated = {
             **job,
             "status": "failed",
+            "stage": "failed",
+            "progress_message": error_message,
             "updated_at": now,
             "finished_at": job.get("finished_at") or now,
-            "error": message or "任务长时间没有更新，已自动标记为失败。请重新提交或点击重试。",
+            "error": error_message,
             "retryable": isinstance(job.get("payload"), dict),
         }
         app_data_store.save_image_job(updated)
@@ -67,17 +70,23 @@ class ImageJobService:
             self,
             *,
             identity: dict[str, object],
-            task: Callable[[], dict[str, object]],
+            task: Callable[[], dict[str, object]] | None = None,
+            task_factory: Callable[[str], Callable[[], dict[str, object]]] | None = None,
             kind: str,
             metadata: dict[str, object] | None = None,
             payload: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        if task is None and task_factory is None:
+            raise ValueError("image job task is required")
         job_id = uuid.uuid4().hex
         now = self._now_iso()
         job = {
             "job_id": job_id,
             "kind": kind,
             "status": "pending",
+            "stage": "queued",
+            "progress_message": "任务已加入生成队列。",
+            "progress_percent": 0,
             "subject_id": str(identity.get("id") or ""),
             "role": str(identity.get("role") or ""),
             "created_at": now,
@@ -100,9 +109,12 @@ class ImageJobService:
                 "quota_remaining": identity.get("quota_remaining"),
             },
         }
+        actual_task = task if task is not None else task_factory(job_id) if task_factory is not None else None
+        if actual_task is None:
+            raise ValueError("image job task is required")
         with self._lock:
             self._jobs[job_id] = job
-            self._tasks[job_id] = task
+            self._tasks[job_id] = actual_task
             app_data_store.save_image_job(job)
             if len(self._jobs) > 300:
                 for old_job_id in list(self._jobs.keys())[:100]:
@@ -110,9 +122,25 @@ class ImageJobService:
                         self._jobs.pop(old_job_id, None)
                         self._tasks.pop(old_job_id, None)
 
-        thread = threading.Thread(target=self._run, args=(job_id, task), name=f"image-job-{job_id[:8]}", daemon=True)
+        thread = threading.Thread(target=self._run, args=(job_id, actual_task), name=f"image-job-{job_id[:8]}", daemon=True)
         thread.start()
         return self.get(job_id) or job
+
+    def update_progress(
+            self,
+            job_id: str,
+            *,
+            stage: str,
+            message: str,
+            progress_percent: int | None = None,
+    ) -> None:
+        updates: dict[str, object] = {
+            "stage": stage,
+            "progress_message": message,
+        }
+        if progress_percent is not None:
+            updates["progress_percent"] = max(0, min(100, int(progress_percent)))
+        self._update(job_id, **updates)
 
     def _run(self, job_id: str, task: Callable[[], dict[str, object]]) -> None:
         current = self.get(job_id)
@@ -120,18 +148,34 @@ class ImageJobService:
         self._update(
             job_id,
             status="running",
+            stage="running",
+            progress_message="正在准备图片任务。",
+            progress_percent=10,
             started_at=self._now_iso(),
             finished_at="",
             retryable=False,
             attempts=attempts,
         )
         try:
-            self._update(job_id, status="succeeded", result=task(), error="", finished_at=self._now_iso(), retryable=False)
+            self._update(
+                job_id,
+                status="succeeded",
+                stage="completed",
+                progress_message="图片任务已完成。",
+                progress_percent=100,
+                result=task(),
+                error="",
+                finished_at=self._now_iso(),
+                retryable=False,
+            )
         except Exception as exc:
+            message = friendly_error_message(exc)
             self._update(
                 job_id,
                 status="failed",
-                error=friendly_error_message(exc),
+                stage="failed",
+                progress_message=message,
+                error=message,
                 raw_error=str(exc),
                 finished_at=self._now_iso(),
                 retryable=True,
@@ -199,6 +243,9 @@ class ImageJobService:
             self._jobs[job_id] = {
                 **job,
                 "status": "pending",
+                "stage": "queued",
+                "progress_message": "任务已重新加入生成队列。",
+                "progress_percent": 0,
                 "updated_at": now,
                 "started_at": "",
                 "finished_at": "",

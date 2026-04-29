@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { ImageComposer } from "@/app/image/components/image-composer";
 import { ImageResults, type ImageLightboxItem } from "@/app/image/components/image-results";
 import { ImageSidebar } from "@/app/image/components/image-sidebar";
+import { useImageJobRunner } from "@/app/image/hooks/use-image-job-runner";
 import { ImageLightbox } from "@/components/image-lightbox";
 import {
   Dialog,
@@ -17,18 +18,14 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   archiveProject,
-  createImageEditJob,
-  createImageGenerationJob,
   createProject,
   fetchAccounts,
   fetchCurrentIdentity,
-  fetchImageJob,
   fetchProjects,
   fetchUIConfig,
   updateProject,
   type Account,
   type CurrentIdentity,
-  type GeneratedImageData,
   type ImageModel,
   type ProjectItem,
 } from "@/lib/api";
@@ -384,50 +381,6 @@ function buildReferenceImageFromResult(image: StoredImage, fileName: string): St
   };
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function waitForImageJob(jobId: string) {
-  const startedAt = Date.now();
-  let interval = 1500;
-  while (Date.now() - startedAt < 10 * 60 * 1000) {
-    const { job } = await fetchImageJob(jobId);
-    if (job.status === "succeeded") {
-      return job.result;
-    }
-    if (job.status === "failed") {
-      const retryHint = job.retryable ? "，可以重试" : "";
-      throw new Error(toFriendlyErrorMessage(job.error || `生成失败${retryHint}`));
-    }
-    await delay(interval);
-    interval = Math.min(5000, interval + 500);
-  }
-  throw new Error("图片生成仍在处理中，请稍后到作品库查看");
-}
-
-async function runImageJob(
-  mode: ImageConversationMode,
-  referenceFiles: File[],
-  prompt: string,
-  model: ImageModel,
-  size: string,
-  referenceStrength: ImageReferenceStrength,
-  projectId: string,
-): Promise<GeneratedImageData> {
-  const finalPrompt = mode === "edit" ? buildEditPrompt(prompt, referenceStrength) : prompt;
-  const { job } =
-    mode === "edit"
-      ? await createImageEditJob(referenceFiles, finalPrompt, model, size, projectId)
-      : await createImageGenerationJob(finalPrompt, model, size, projectId);
-  const result = await waitForImageJob(job.job_id);
-  const first = result?.data?.[0];
-  if (!first?.b64_json && !first?.url) {
-    throw new Error("未返回图片数据");
-  }
-  return first;
-}
-
 function pickFallbackConversationId(conversations: ImageConversation[]) {
   const activeConversation = conversations.find((conversation) =>
     conversation.turns.some((turn) => turn.status === "queued" || turn.status === "generating"),
@@ -550,6 +503,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const resultsViewportRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { runImageJob } = useImageJobRunner();
 
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageCount, setImageCount] = useState("1");
@@ -1481,21 +1435,57 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
         const tasks = pendingImages.map(async (pendingImage) => {
           try {
-            const first = await runImageJob(
-              queuedTurn.mode,
+            const finalPrompt =
+              queuedTurn.mode === "edit"
+                ? buildEditPrompt(queuedTurn.prompt, queuedTurn.referenceStrength || "medium")
+                : queuedTurn.prompt;
+            const first = await runImageJob({
+              mode: queuedTurn.mode,
               referenceFiles,
-              queuedTurn.prompt,
-              queuedTurn.model,
-              queuedTurn.size,
-              queuedTurn.referenceStrength || "medium",
-              snapshot.projectId || activeProjectId,
-            );
+              prompt: finalPrompt,
+              model: queuedTurn.model,
+              size: queuedTurn.size,
+              projectId: snapshot.projectId || activeProjectId,
+              onProgress: (job) => {
+                void updateConversation(
+                  conversationId,
+                  (current) => {
+                    const conversation = current ?? snapshot;
+                    return {
+                      ...conversation,
+                      updatedAt: new Date().toISOString(),
+                      turns: conversation.turns.map((turn) =>
+                        turn.id === queuedTurn.id
+                          ? {
+                              ...turn,
+                              status: "generating" as const,
+                              images: turn.images.map((image) =>
+                                image.id === pendingImage.id
+                                  ? {
+                                      ...image,
+                                      stage: job.stage,
+                                      progressMessage: job.progress_message,
+                                      progressPercent: job.progress_percent,
+                                    }
+                                  : image,
+                              ),
+                            }
+                          : turn,
+                      ),
+                    };
+                  },
+                  { persist: false },
+                );
+              },
+            });
 
             const nextImage: StoredImage = {
               id: pendingImage.id,
               status: "success",
               b64_json: first.b64_json,
               url: first.url,
+              progressPercent: 100,
+              progressMessage: "生成完成",
             };
 
             await updateConversation(
@@ -1613,7 +1603,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
       }
     },
-    [activeProjectId, loadQuota, updateConversation],
+    [activeProjectId, loadQuota, runImageJob, updateConversation],
   );
   /* eslint-enable react-hooks/preserve-manual-memoization */
 
@@ -1638,7 +1628,14 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   status: "queued",
                   error: undefined,
                   images: turn.images.map((image) =>
-                    image.id === imageId ? { id: image.id, status: "loading" as const } : image,
+                    image.id === imageId
+                      ? {
+                          id: image.id,
+                          status: "loading" as const,
+                          progressMessage: "等待重新处理...",
+                          progressPercent: 0,
+                        }
+                      : image,
                   ),
                 }
               : turn,
@@ -1708,6 +1705,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       images: Array.from({ length: parsedCount }, (_, index) => ({
         id: `${turnId}-${index}`,
         status: "loading" as const,
+        progressMessage: "等待当前对话开始处理...",
+        progressPercent: 0,
       })),
       createdAt: now,
       status: "queued",

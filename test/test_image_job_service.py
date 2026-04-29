@@ -76,6 +76,43 @@ class ImageJobServiceTests(unittest.TestCase):
         self.assertEqual(current["status"], "failed")
         self.assertIn("上游拒绝", str(current["error"]))
         self.assertIn("no downloadable", str(current["raw_error"]))
+        self.assertEqual(current["stage"], "failed")
+        self.assertIn("上游拒绝", str(current["progress_message"]))
+
+    def test_task_factory_can_update_progress(self):
+        store = FakeJobStore()
+        with mock.patch("services.image_job_service.app_data_store", store):
+            service = ImageJobService()
+
+            def build_task(job_id):
+                def task():
+                    service.update_progress(
+                        job_id,
+                        stage="upstream_request",
+                        message="正在提交到上游图片服务。",
+                        progress_percent=35,
+                    )
+                    return {"data": [{"url": "https://example.com/image.png"}]}
+
+                return task
+
+            job = service.create(
+                identity={"id": "user-1", "name": "User", "role": "user"},
+                task_factory=build_task,
+                kind="images.generations",
+                payload={"prompt": "hello"},
+            )
+            current = None
+            for _ in range(50):
+                current = service.get(str(job["job_id"]))
+                if current and current.get("status") == "succeeded":
+                    break
+                time.sleep(0.01)
+
+        self.assertIsNotNone(current)
+        self.assertEqual(current["status"], "succeeded")
+        self.assertEqual(current["stage"], "completed")
+        self.assertEqual(current["progress_percent"], 100)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,9 @@ export type StoredImage = {
   b64_json?: string;
   url?: string;
   error?: string;
+  stage?: string;
+  progressMessage?: string;
+  progressPercent?: number;
 };
 
 export type ImageTurnStatus = "queued" | "generating" | "success" | "error";

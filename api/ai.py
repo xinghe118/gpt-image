@@ -17,7 +17,11 @@ from services.chatgpt_service import ChatGPTService, ImageGenerationError
 from services.image_library_service import image_library_service
 from services.image_concurrency_service import ImageConcurrencyLimitError, image_concurrency_service
 from services.image_job_service import image_job_service
+from services.image_result_resolver import format_image_api_result
 from utils.helper import is_image_chat_request, sse_json_stream
+
+
+ImageJobProgressCallback = Callable[[str, str, int | None], None]
 
 
 class ImageGenerationRequest(BaseModel):
@@ -146,28 +150,14 @@ def _has_image_generation_tool(payload: dict[str, object]) -> bool:
     return any(isinstance(tool, dict) and tool.get("type") == "image_generation" for tool in tools)
 
 
-def _format_image_api_result(
-        result: dict[str, object],
-        records: list[dict[str, object]],
-        response_format: str,
-) -> dict[str, object]:
-    data = result.get("data") if isinstance(result.get("data"), list) else []
-    formatted: list[dict[str, object]] = []
-    for index, item in enumerate(data):
-        if not isinstance(item, dict):
-            continue
-        record = records[index] if index < len(records) else {}
-        revised_prompt = str(item.get("revised_prompt") or record.get("revised_prompt") or "").strip()
-        if response_format == "url":
-            image_url = str(record.get("image_url") or "").strip()
-            if image_url:
-                formatted.append({"url": image_url, "revised_prompt": revised_prompt})
-            continue
-        next_item = dict(item)
-        if record.get("image_url"):
-            next_item["url"] = record.get("image_url")
-        formatted.append(next_item)
-    return {"created": result.get("created"), "data": formatted}
+def _emit_image_job_progress(
+        progress: ImageJobProgressCallback | None,
+        stage: str,
+        message: str,
+        percent: int | None = None,
+) -> None:
+    if progress is not None:
+        progress(stage, message, percent)
 
 
 def _run_generation_request(
@@ -183,13 +173,17 @@ def _run_generation_request(
         started_at: float,
         project_id: str | None = None,
         wait_for_slot: bool = False,
+        progress: ImageJobProgressCallback | None = None,
 ) -> dict[str, object]:
     try:
+        _emit_image_job_progress(progress, "waiting_slot", "正在等待可用生成通道。", 20)
         with image_concurrency_service.acquire(identity, wait=wait_for_slot):
+            _emit_image_job_progress(progress, "upstream_request", "正在提交到上游图片服务。", 35)
             result = chatgpt_service.generate_with_pool(prompt, model, n, size, "b64_json", base_url)
         result_count = len(result.get("data") or [])
         records: list[dict[str, object]] = []
         if result_count > 0:
+            _emit_image_job_progress(progress, "saving_result", "正在保存作品并同步到作品库。", 82)
             auth_service.consume_quota(identity, result_count)
             records = image_library_service.record_images(
                 identity=identity,
@@ -210,7 +204,7 @@ def _run_generation_request(
             duration_ms=int((time.perf_counter() - started_at) * 1000),
             metadata={"stream": False, "n": n, "size": size, "result_count": result_count, "project_id": project_id},
         )
-        return _format_image_api_result(result, records, response_format)
+        return format_image_api_result(result, records, response_format)
     except ImageGenerationError as exc:
         activity_log_service.record(
             "images.generations",
@@ -257,13 +251,17 @@ def _run_edit_request(
         started_at: float,
         project_id: str | None = None,
         wait_for_slot: bool = False,
+        progress: ImageJobProgressCallback | None = None,
 ) -> dict[str, object]:
     try:
+        _emit_image_job_progress(progress, "waiting_slot", "正在等待可用编辑通道。", 20)
         with image_concurrency_service.acquire(identity, wait=wait_for_slot):
+            _emit_image_job_progress(progress, "upstream_request", "正在提交参考图到上游图片服务。", 35)
             result = chatgpt_service.edit_with_pool(prompt, images, model, n, size, "b64_json", base_url)
         result_count = len(result.get("data") or [])
         records: list[dict[str, object]] = []
         if result_count > 0:
+            _emit_image_job_progress(progress, "saving_result", "正在保存编辑结果并同步到作品库。", 82)
             auth_service.consume_quota(identity, result_count)
             records = image_library_service.record_images(
                 identity=identity,
@@ -284,7 +282,7 @@ def _run_edit_request(
             duration_ms=int((time.perf_counter() - started_at) * 1000),
             metadata={"stream": False, "n": n, "size": size, "image_count": len(images), "result_count": result_count, "project_id": project_id},
         )
-        return _format_image_api_result(result, records, response_format)
+        return format_image_api_result(result, records, response_format)
     except ImageGenerationError as exc:
         activity_log_service.record(
             "images.edits",
@@ -438,7 +436,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 "base_url": base_url,
                 "project_id": body.project_id,
             },
-            task=lambda: _run_generation_request(
+            task_factory=lambda job_id: lambda: _run_generation_request(
                 chatgpt_service=chatgpt_service,
                 identity=identity,
                 prompt=body.prompt,
@@ -450,6 +448,12 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 started_at=started_at,
                 project_id=body.project_id,
                 wait_for_slot=True,
+                progress=lambda stage, message, percent=None: image_job_service.update_progress(
+                    job_id,
+                    stage=stage,
+                    message=message,
+                    progress_percent=percent,
+                ),
             ),
         )
         return {"job": job}
@@ -600,7 +604,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 "project_id": project_id,
                 "images": _encode_job_images(images),
             },
-            task=lambda: _run_edit_request(
+            task_factory=lambda job_id: lambda: _run_edit_request(
                 chatgpt_service=chatgpt_service,
                 identity=identity,
                 prompt=prompt,
@@ -613,6 +617,12 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 started_at=started_at,
                 project_id=project_id,
                 wait_for_slot=True,
+                progress=lambda stage, message, percent=None: image_job_service.update_progress(
+                    job_id,
+                    stage=stage,
+                    message=message,
+                    progress_percent=percent,
+                ),
             ),
         )
         return {"job": job}
@@ -686,6 +696,12 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                     started_at=time.perf_counter(),
                     project_id=str(payload.get("project_id") or "") or None,
                     wait_for_slot=True,
+                    progress=lambda stage, message, percent=None: image_job_service.update_progress(
+                        job_id,
+                        stage=stage,
+                        message=message,
+                        progress_percent=percent,
+                    ),
                 )
             if kind == "images.edits":
                 images = _decode_job_images(payload.get("images"))
@@ -704,6 +720,12 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                     started_at=time.perf_counter(),
                     project_id=str(payload.get("project_id") or "") or None,
                     wait_for_slot=True,
+                    progress=lambda stage, message, percent=None: image_job_service.update_progress(
+                        job_id,
+                        stage=stage,
+                        message=message,
+                        progress_percent=percent,
+                    ),
                 )
             return None
 

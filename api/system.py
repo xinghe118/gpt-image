@@ -259,5 +259,16 @@ def create_router(app_version: str) -> APIRouter:
             raise HTTPException(status_code=404, detail={"error": "image not found"})
         return {"item": item}
 
+    @router.delete("/api/library/{image_id}")
+    async def delete_library_item(image_id: str, authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        try:
+            item = image_library_service.delete_image(identity=identity, image_id=image_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail={"error": str(exc)}) from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail={"error": "image not found"})
+        return {"ok": True, "item": item}
+
     return router
 

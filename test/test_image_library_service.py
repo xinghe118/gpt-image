@@ -31,6 +31,11 @@ class FakeStore:
     def list_library_page(self, **kwargs):
         return None
 
+    def delete_library_item(self, image_id):
+        self.document = {
+            "items": [item for item in self.document.get("items", []) if item.get("id") != image_id]
+        }
+
 
 class ImageLibraryServiceTests(unittest.TestCase):
     def setUp(self):
@@ -68,6 +73,44 @@ class ImageLibraryServiceTests(unittest.TestCase):
         self.assertNotIn("b64_json", items[0])
         self.assertTrue((Path(self.temp_dir.name) / items[0]["image_url"].removeprefix("/images/")).exists())
         self.assertTrue((Path(self.temp_dir.name) / items[0]["thumb_url"].removeprefix("/images/")).exists())
+
+    def test_user_can_delete_own_image_and_files(self):
+        image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+        self.service.record_images(
+            identity={"id": "user-1", "name": "User", "role": "user"},
+            prompt="hello",
+            model="gpt-image-2",
+            mode="generate",
+            size="1:1",
+            images=[{"b64_json": image_data}],
+        )
+        item = self.service.list_images(identity={"id": "user-1", "role": "user"})["items"][0]
+        image_path = Path(self.temp_dir.name) / item["image_url"].removeprefix("/images/")
+        thumb_path = Path(self.temp_dir.name) / item["thumb_url"].removeprefix("/images/")
+
+        deleted = self.service.delete_image(identity={"id": "user-1", "role": "user"}, image_id=item["id"])
+
+        self.assertIsNotNone(deleted)
+        self.assertEqual(self.service.list_images(identity={"id": "user-1", "role": "user"})["items"], [])
+        self.assertFalse(image_path.exists())
+        self.assertFalse(thumb_path.exists())
+
+    def test_user_cannot_delete_other_users_image(self):
+        self.store.document = {
+            "items": [
+                {
+                    "id": "image-1",
+                    "subject_id": "user-1",
+                    "image_url": "/images/library/image-1.png",
+                    "thumb_url": "/images/library/thumbs/image-1.webp",
+                }
+            ]
+        }
+
+        with self.assertRaises(PermissionError):
+            self.service.delete_image(identity={"id": "user-2", "role": "user"}, image_id="image-1")
+
+        self.assertEqual(len(self.store.document["items"]), 1)
 
 
 if __name__ == "__main__":

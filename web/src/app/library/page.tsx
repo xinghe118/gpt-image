@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Download, Images, LoaderCircle, Pencil, Search, Sparkles, X } from "lucide-react";
+import { Copy, Download, Images, LoaderCircle, Pencil, Search, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  deleteLibraryItem,
   fetchLibraryItems,
   fetchProjects,
   moveLibraryItemToProject,
@@ -59,6 +60,8 @@ export default function LibraryPage() {
   });
   const [moveProjectId, setMoveProjectId] = useState("");
   const [isMovingProject, setIsMovingProject] = useState(false);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [total, setTotal] = useState(0);
@@ -165,6 +168,25 @@ export default function LibraryPage() {
       toast.error(error instanceof Error ? error.message : "移动作品失败");
     } finally {
       setIsMovingProject(false);
+    }
+  };
+
+  const deleteSelectedItem = async () => {
+    if (!selectedItem) {
+      return;
+    }
+    setIsDeletingItem(true);
+    try {
+      await deleteLibraryItem(selectedItem.id);
+      setItems((current) => current.filter((item) => item.id !== selectedItem.id));
+      setTotal((current) => Math.max(0, current - 1));
+      setSelectedItem(null);
+      setIsDeleteConfirmOpen(false);
+      toast.success("作品已删除");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "删除作品失败");
+    } finally {
+      setIsDeletingItem(false);
     }
   };
 
@@ -367,8 +389,44 @@ export default function LibraryPage() {
                 <Copy className="size-4" />
                 复制提示词
               </Button>
+              <Button
+                variant="outline"
+                className="h-10 rounded-lg border-rose-200 bg-white px-3 text-rose-600 hover:bg-rose-50"
+                onClick={() => setIsDeleteConfirmOpen(true)}
+              >
+                <Trash2 className="size-4" />
+              </Button>
             </div>
           </aside>
+        </div>
+      ) : null}
+
+      {selectedItem && isDeleteConfirmOpen ? (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="text-lg font-semibold text-slate-950">删除这个作品？</div>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              删除后会从作品库移除，并清理本地原图和缩略图。历史对话记录不会被删除。
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                className="h-10 rounded-lg border-slate-200 bg-white"
+                onClick={() => setIsDeleteConfirmOpen(false)}
+                disabled={isDeletingItem}
+              >
+                取消
+              </Button>
+              <Button
+                className="h-10 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
+                onClick={() => void deleteSelectedItem()}
+                disabled={isDeletingItem}
+              >
+                {isDeletingItem ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                删除
+              </Button>
+            </div>
+          </div>
         </div>
       ) : null}
     </section>

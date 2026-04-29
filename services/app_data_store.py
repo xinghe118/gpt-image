@@ -432,6 +432,30 @@ class AppDataStore:
         finally:
             session.close()
 
+    def delete_library_item(self, image_id: str) -> None:
+        image_id = self._clean(image_id)
+        if not image_id:
+            return
+        if not self._database_enabled:
+            items = [
+                item
+                for item in self._load_collection_document("library")
+                if self._clean(item.get("id")) != image_id
+            ]
+            self.save_document("library", {"items": items})
+            return
+        session = self._session()
+        try:
+            row = session.get(ImageLibraryDataModel, image_id)
+            if row is not None:
+                session.delete(row)
+                session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def delete_conversation(self, conversation_id: str) -> None:
         conversation_id = self._clean(conversation_id)
         if not conversation_id or not self._database_enabled:

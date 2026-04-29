@@ -50,6 +50,14 @@ class ImageLibraryService:
     def _thumb_path(record_id: str) -> Path:
         return config.images_dir / "library" / "thumbs" / f"{record_id}.webp"
 
+    @staticmethod
+    def _remove_file(path: Path) -> None:
+        try:
+            if path.exists() and path.is_file():
+                path.unlink()
+        except OSError:
+            pass
+
     def _decode_image(self, b64_json: str) -> bytes:
         value = self._clean(b64_json)
         if value.startswith("data:"):
@@ -256,6 +264,31 @@ class ImageLibraryService:
                 return None
             self._save(items)
             return updated
+
+    def delete_image(self, *, identity: dict[str, object], image_id: str) -> dict[str, Any] | None:
+        record_id = self._clean(image_id)
+        if not record_id:
+            return None
+        subject_id = self._clean(identity.get("id"))
+        is_admin = identity.get("role") == "admin"
+        with self._lock:
+            items = self._load()
+            target: dict[str, Any] | None = None
+            next_items: list[dict[str, Any]] = []
+            for item in items:
+                if self._clean(item.get("id")) != record_id:
+                    next_items.append(item)
+                    continue
+                if not is_admin and self._clean(item.get("subject_id")) != subject_id:
+                    raise PermissionError("image permission denied")
+                target = item
+            if target is None:
+                return None
+            self._save(next_items)
+            app_data_store.delete_library_item(record_id)
+        self._remove_file(self._image_path(record_id))
+        self._remove_file(self._thumb_path(record_id))
+        return self._public_item(target)
 
 
 image_library_service = ImageLibraryService()

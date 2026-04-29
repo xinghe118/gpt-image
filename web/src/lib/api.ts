@@ -790,6 +790,12 @@ export async function moveLibraryItemToProject(imageId: string, projectId: strin
   });
 }
 
+export async function deleteLibraryItem(imageId: string) {
+  return httpRequest<{ ok: boolean; item: LibraryImageItem }>(`/api/library/${imageId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function moveConversationToProject(conversationId: string, projectId: string) {
   return httpRequest<{
     item: {

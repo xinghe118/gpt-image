@@ -95,14 +95,22 @@ docker compose ps
 git clone https://github.com/xinghe118/gpt-image.git
 cd gpt-image
 
-# 按需修改 config.json 或 .env
+# 先复制环境变量模板，并修改管理员密钥和 PostgreSQL 密码
+cp .env.example .env
+
 docker compose up -d
 ```
 
-启动后访问：
+默认会同时启动应用和 PostgreSQL，并把数据保存到 Docker volume。启动后访问：
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:3000
+```
+
+本地轻量开发可以使用 `docker-compose.local.yml`，它默认使用 SQLite 并映射到 8000 端口：
+
+```bash
+docker compose -f docker-compose.local.yml up -d --build
 ```
 
 ### 本地开发
@@ -139,7 +147,10 @@ npm run build
 | --- | --- |
 | `GPT_IMAGE_AUTH_KEY` | 管理员访问密钥，可覆盖配置文件中的 auth key |
 | `STORAGE_BACKEND` | 存储后端，支持 `json`、`sqlite`、`postgres`、`git` |
-| `DATABASE_URL` | PostgreSQL 连接地址，`STORAGE_BACKEND=postgres` 时使用 |
+| `DATABASE_URL` | PostgreSQL 连接地址，使用外部数据库时填写 |
+| `POSTGRES_DB` | Docker Compose 内置 PostgreSQL 数据库名 |
+| `POSTGRES_USER` | Docker Compose 内置 PostgreSQL 用户名 |
+| `POSTGRES_PASSWORD` | Docker Compose 内置 PostgreSQL 密码，生产环境必须修改 |
 | `GIT_REPO_URL` | Git 存储仓库地址，`STORAGE_BACKEND=git` 时使用 |
 | `GIT_TOKEN` | Git 存储访问令牌 |
 | `refresh_account_interval_minute` | 账号信息自动刷新周期，单位分钟 |
@@ -148,8 +159,8 @@ npm run build
 
 ```yaml
 environment:
-  - STORAGE_BACKEND=postgres
-  - DATABASE_URL=postgresql://user:password@host:5432/dbname
+  STORAGE_BACKEND: postgres
+  DATABASE_URL: postgresql://user:password@host:5432/dbname
 ```
 
 ### PostgreSQL 存储说明
@@ -161,7 +172,9 @@ environment:
 - `projects`：项目空间数据
 - `conversations`：多设备同步的图片对话数据
 - `image_library`：作品库索引、项目归属和缩略图信息
+- `image_jobs`：图片任务状态、失败原因和重试元数据
 - `activity_logs`：API 调用和异常日志
+- `schema_version`：应用数据表结构版本
 
 如果你已经有本地 JSON 数据，可以在系统设置里的存储模块执行“一键迁移”，会把账号、用户密钥、项目、对话、作品库和日志写入 PostgreSQL。
 

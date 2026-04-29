@@ -9,9 +9,11 @@ from services.account_service import account_service
 from services.auth_service import auth_service
 from services.config import config
 from services.error_messages import friendly_error_message
+from services.runtime_log import get_logger, log_event
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 WEB_DIST_DIR = BASE_DIR / "web_dist"
+logger = get_logger("gpt_image.support")
 
 
 def extract_bearer_token(authorization: str | None) -> str:
@@ -90,10 +92,15 @@ def start_limited_account_watcher(stop_event: Event) -> Thread:
             try:
                 limited_tokens = account_service.list_limited_tokens()
                 if limited_tokens:
-                    print(f"[account-limited-watcher] checking {len(limited_tokens)} limited accounts")
+                    log_event(
+                        logger,
+                        "account_limited_watcher.check",
+                        "checking limited accounts",
+                        count=len(limited_tokens),
+                    )
                     account_service.refresh_accounts(limited_tokens)
             except Exception as exc:
-                print(f"[account-limited-watcher] fail {exc}")
+                logger.warning("account_limited_watcher.fail: %s", exc)
             stop_event.wait(interval_seconds)
 
     thread = Thread(target=worker, name="limited-account-watcher", daemon=True)

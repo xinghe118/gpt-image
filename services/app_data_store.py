@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -13,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from services.config import DATA_DIR
 
 Base = declarative_base()
+CURRENT_SCHEMA_VERSION = 2
 
 
 class AppDocumentModel(Base):
@@ -20,6 +22,15 @@ class AppDocumentModel(Base):
 
     key = Column(String(120), primary_key=True)
     data = Column(Text, nullable=False)
+
+
+class SchemaVersionModel(Base):
+    __tablename__ = "schema_version"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    component = Column(String(80), unique=True, nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    updated_at = Column(String(40), nullable=False)
 
 
 class ActivityLogModel(Base):
@@ -109,6 +120,7 @@ class AppDataStore:
             self._engine = create_engine(_database_url(), pool_pre_ping=True, pool_recycle=3600)
             Base.metadata.create_all(self._engine)
             self._ensure_schema()
+            self._ensure_schema_version()
             self._session_factory = sessionmaker(bind=self._engine)
 
     @property
@@ -135,6 +147,33 @@ class AppDataStore:
         with self._engine.begin() as connection:
             for statement in statements:
                 connection.execute(text(statement))
+
+    def _ensure_schema_version(self) -> None:
+        if self._engine is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        with self._engine.begin() as connection:
+            row = connection.execute(
+                text("SELECT version FROM schema_version WHERE component = :component"),
+                {"component": "app"},
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    text(
+                        "INSERT INTO schema_version (component, version, updated_at) "
+                        "VALUES (:component, :version, :updated_at)"
+                    ),
+                    {"component": "app", "version": CURRENT_SCHEMA_VERSION, "updated_at": now},
+                )
+                return
+            if int(row[0] or 0) < CURRENT_SCHEMA_VERSION:
+                connection.execute(
+                    text(
+                        "UPDATE schema_version SET version = :version, updated_at = :updated_at "
+                        "WHERE component = :component"
+                    ),
+                    {"component": "app", "version": CURRENT_SCHEMA_VERSION, "updated_at": now},
+                )
 
     def load_document(self, key: str, default: Any) -> Any:
         if not self._database_enabled:
@@ -717,6 +756,7 @@ class AppDataStore:
                 return {
                     "status": "healthy",
                     "backend": "database",
+                    "schema_version": CURRENT_SCHEMA_VERSION,
                     "documents": session.query(AppDocumentModel).count(),
                     "projects": session.query(ProjectDataModel).count(),
                     "conversations": session.query(ConversationDataModel).count(),

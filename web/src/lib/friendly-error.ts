@@ -28,6 +28,42 @@ export function toFriendlyErrorMessage(value: unknown) {
     return "当前账号池没有可用图片额度，请更换账号或等待额度恢复。";
   }
 
+  if (lower.includes("user key quota exhausted")) {
+    return "当前用户密钥额度已用完，请联系管理员调整额度。";
+  }
+
+  if (lower.includes("authorization is invalid")) {
+    return "登录密钥无效或已过期，请重新登录。";
+  }
+
+  if (lower.includes("admin permission required") || lower.includes("permission denied")) {
+    return "当前密钥没有权限执行这个操作。";
+  }
+
+  if (lower.includes("image file is required")) {
+    return "请先上传参考图片。";
+  }
+
+  if (lower.includes("image file is empty")) {
+    return "上传的图片为空，请重新选择图片。";
+  }
+
+  if (lower.includes("prompt is required") || lower.includes("input text is required")) {
+    return "请输入提示词后再提交。";
+  }
+
+  if (lower.includes("current plan allows at most")) {
+    return "当前用户套餐不支持这么多张图片，请减少生成张数。";
+  }
+
+  if (lower.includes("current plan does not allow image edits")) {
+    return "当前用户套餐不支持图生图或图片编辑。";
+  }
+
+  if (lower.includes("current plan does not allow model")) {
+    return "当前用户套餐不支持所选模型。";
+  }
+
   if (lower.includes("network error")) {
     return "网络连接失败，请检查服务器、代理或上游连接后重试。";
   }

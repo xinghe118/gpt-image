@@ -16,6 +16,7 @@ from api.support import resolve_web_asset, start_limited_account_watcher
 from services.account_service import account_service
 from services.chatgpt_service import ChatGPTService
 from services.config import config
+from services.error_messages import public_error_payload
 
 
 class CacheControlStaticFiles(StaticFiles):
@@ -53,6 +54,21 @@ def create_app() -> FastAPI:
     app.include_router(accounts.create_router())
     app.include_router(system.create_router(app_version))
 
+    @app.exception_handler(HTTPException)
+    async def handle_http_error(_: Request, exc: HTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            raw_message = detail.get("error") or detail.get("message") or detail.get("detail")
+            code = detail.get("code") if isinstance(detail.get("code"), str) else None
+        else:
+            raw_message = detail
+            code = None
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=public_error_payload(status_code=exc.status_code, message=raw_message, code=code),
+            headers=exc.headers,
+        )
+
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception):
         error_log = config.images_dir.parent / "server_errors.log"
@@ -63,7 +79,7 @@ def create_app() -> FastAPI:
             handle.write("\n")
         return JSONResponse(
             status_code=500,
-            content={"detail": {"error": f"服务器内部错误：{exc}"}},
+            content=public_error_payload(status_code=500, message="服务器内部错误", code="SERVER_ERROR"),
         )
 
     if config.images_dir.exists():

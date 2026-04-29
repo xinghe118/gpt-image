@@ -28,6 +28,7 @@ import {
   type CurrentIdentity,
   type ImageModel,
   type ProjectItem,
+  type ProjectSettings,
 } from "@/lib/api";
 import { toFriendlyErrorMessage } from "@/lib/friendly-error";
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -438,6 +439,34 @@ function buildEditPrompt(userPrompt: string, strength: ImageReferenceStrength) {
   ].join("\n");
 }
 
+function normalizeProjectMode(value: unknown): ImageConversationMode {
+  return value === "edit" ? "edit" : "generate";
+}
+
+function normalizeProjectModel(value: unknown): ImageModel {
+  return typeof value === "string" && isImageModel(value) ? value : "gpt-image-2";
+}
+
+function normalizeProjectSize(value: unknown) {
+  const size = String(value || "").trim();
+  return ["", "1:1", "16:9", "9:16", "4:3", "3:4"].includes(size) ? size : "";
+}
+
+function normalizeProjectCount(value: unknown) {
+  const count = Number(value);
+  return String(Math.max(1, Math.min(10, Number.isFinite(count) ? count : 1)));
+}
+
+function normalizeProjectReferenceStrength(value: unknown): ImageReferenceStrength {
+  return value === "low" || value === "high" ? value : "medium";
+}
+
+function applyProjectPromptRules(prompt: string, settings?: ProjectSettings) {
+  const prefix = String(settings?.prompt_prefix || "").trim();
+  const suffix = String(settings?.prompt_suffix || "").trim();
+  return [prefix, prompt.trim(), suffix].filter(Boolean).join("\n\n");
+}
+
 async function recoverConversationHistory(items: ImageConversation[]) {
   const normalized = items.map((conversation) => {
     let changed = false;
@@ -588,6 +617,29 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [conversations],
   );
   const activeTaskCount = taskSummary.queued + taskSummary.running;
+
+  const applyProjectDefaults = useCallback((project: ProjectItem | null, options: { notify?: boolean } = {}) => {
+    const settings = project?.settings;
+    if (!settings) {
+      return;
+    }
+    setImageMode(normalizeProjectMode(settings.default_mode));
+    if (showImageModelSelector) {
+      setImageModel(normalizeProjectModel(settings.default_model));
+    }
+    setImageSize(normalizeProjectSize(settings.default_size));
+    setImageCount(normalizeProjectCount(settings.default_count));
+    setReferenceStrength(normalizeProjectReferenceStrength(settings.default_reference_strength));
+    if (settings.default_style_preset_id) {
+      const preset = stylePresets.find((item) => item.id === settings.default_style_preset_id);
+      if (preset) {
+        setImagePrompt((current) => (current.trim() ? current : preset.prompt));
+      }
+    }
+    if (options.notify) {
+      toast.success("已套用项目默认参数");
+    }
+  }, [showImageModelSelector, stylePresets]);
 
   useEffect(() => {
     conversationsRef.current = conversations;
@@ -998,6 +1050,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   }, [activeProject]);
 
   useEffect(() => {
+    if (!activeProject || selectedConversationId) {
+      return;
+    }
+    applyProjectDefaults(activeProject);
+  }, [activeProject, applyProjectDefaults, selectedConversationId]);
+
+  useEffect(() => {
     if (!selectedConversation) {
       return;
     }
@@ -1058,6 +1117,16 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     setSelectedConversationId(id);
   }, []);
 
+  const clearComposerInputs = useCallback(() => {
+    setImagePrompt("");
+    setImageCount("1");
+    setReferenceImageFiles([]);
+    setReferenceImages([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, []);
+
   const handleCreateProject = async () => {
     const name = newProjectName.trim();
     if (!name) {
@@ -1072,7 +1141,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       setIsNewConversationDraft(true);
       setSelectedConversationId(null);
       setNewProjectName("");
-      resetComposer();
+      clearComposerInputs();
+      applyProjectDefaults(data.item);
       toast.success("项目已创建");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "创建项目失败");
@@ -1080,6 +1150,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       setIsCreatingProject(false);
     }
   };
+
+  const handleSwitchProject = useCallback((projectId: string) => {
+    const nextProject = projects.find((project) => project.id === projectId) ?? null;
+    setActiveProjectId(projectId);
+    setIsNewConversationDraft(true);
+    setSelectedConversationId(null);
+    clearComposerInputs();
+    applyProjectDefaults(nextProject);
+  }, [applyProjectDefaults, clearComposerInputs, projects]);
 
   const handleRenameProject = async () => {
     if (!activeProject || activeProject.is_default) {
@@ -1125,6 +1204,30 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
+  const handleSaveProjectDefaults = async () => {
+    if (!activeProject || activeProject.is_default) {
+      return;
+    }
+    setIsSavingProject(true);
+    try {
+      const settings: Partial<ProjectSettings> = {
+        ...activeProject.settings,
+        default_mode: imageMode,
+        default_model: showImageModelSelector ? imageModel : "gpt-image-2",
+        default_size: imageSize,
+        default_count: parsedCount,
+        default_reference_strength: referenceStrength,
+      };
+      const data = await updateProject(activeProject.id, { settings });
+      setProjects(data.items);
+      toast.success("已保存为项目默认参数");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存默认参数失败");
+    } finally {
+      setIsSavingProject(false);
+    }
+  };
+
   const persistConversation = async (conversation: ImageConversation) => {
     const nextConversations = sortImageConversations([
       conversation,
@@ -1156,20 +1259,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [],
   );
 
-  const clearComposerInputs = useCallback(() => {
-    setImagePrompt("");
-    setImageCount("1");
-    setReferenceImageFiles([]);
-    setReferenceImages([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  }, []);
-
   const resetComposer = useCallback(() => {
-    setImageMode("generate");
     clearComposerInputs();
-  }, [clearComposerInputs]);
+    applyProjectDefaults(activeProject);
+  }, [activeProject, applyProjectDefaults, clearComposerInputs]);
 
   const handleCreateDraft = () => {
     setIsNewConversationDraft(true);
@@ -1677,8 +1770,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   }, [conversations, runConversationQueue]);
 
   const handleSubmit = async () => {
-    const prompt = imagePrompt.trim();
-    if (!prompt) {
+    const userPrompt = imagePrompt.trim();
+    if (!userPrompt) {
       toast.error("请输入提示词");
       return;
     }
@@ -1694,6 +1787,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const now = new Date().toISOString();
     const conversationId = targetConversation?.id ?? createId();
     const turnId = createId();
+    const prompt = applyProjectPromptRules(userPrompt, activeProject?.settings);
     const draftTurn: ImageTurn = {
       id: turnId,
       prompt,
@@ -1762,10 +1856,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             <select
               value={activeProjectId}
               onChange={(event) => {
-                setActiveProjectId(event.target.value);
-                setIsNewConversationDraft(true);
-                setSelectedConversationId(null);
-                resetComposer();
+                handleSwitchProject(event.target.value);
               }}
               className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-cyan-300"
             >
@@ -1832,6 +1923,26 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   >
                     <Trash2 className="size-4" />
                     归档
+                  </Button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="outline"
+                    className="h-9 rounded-lg border-slate-200 bg-white px-3 text-xs"
+                    onClick={() => applyProjectDefaults(activeProject, { notify: true })}
+                    disabled={isSavingProject}
+                  >
+                    <RotateCcw className="size-4" />
+                    套用默认
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-9 rounded-lg border-cyan-200 bg-white px-3 text-xs text-cyan-700 hover:bg-cyan-50"
+                    onClick={() => void handleSaveProjectDefaults()}
+                    disabled={isSavingProject}
+                  >
+                    <SlidersHorizontal className="size-4" />
+                    设为默认
                   </Button>
                 </div>
               </div>
@@ -2093,10 +2204,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               <select
                 value={activeProjectId}
                 onChange={(event) => {
-                  setActiveProjectId(event.target.value);
-                  setIsNewConversationDraft(true);
-                  setSelectedConversationId(null);
-                  resetComposer();
+                  handleSwitchProject(event.target.value);
                 }}
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-cyan-300"
               >
